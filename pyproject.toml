@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "gsd"
+version = "0.1.0"
+description = "Code accompanying the paper \"Group Sequential Trial Design using Stepwise Monte Carlo for Increased Flexibility and Robustness\""
+authors = ["Amitay Kamber <kamber@phasevtrials.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+numpy = "^2.2.5"
+scipy = "^1.15.2"
+matplotlib = "^3.10.1"
+rpy2 = "3.4.5"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,3 +1,8 @@
+# pkl files
+*.pkl
+
+#notebooks
+*.ipynb
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

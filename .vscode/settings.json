@@ -1,0 +1,24 @@
+{
+  "editor.rulers": [120],
+  "[python]": {
+    "editor.formatOnType": true,
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit",
+      "source.convertImportFormat": "explicit",
+      "source.unusedImports": "explicit"
+    }
+  },
+  "editor.inlineSuggest.enabled": true,
+  "editor.inlineSuggest.showToolbar": "onHover",
+  "files.autoSave": "afterDelay",
+  "pylint.path": [".venv/bin/python", "-m", "pylint"],
+  "mypy.dmypyExecutable": "${workspaceFolder}/.venv/bin/dmypy",
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.diagnosticMode": "workspace",
+  "cSpell.words": [
+    "HYPERPARAM",
+    "ndarray"
+  ],
+}
