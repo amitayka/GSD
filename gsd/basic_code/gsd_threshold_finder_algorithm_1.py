@@ -59,7 +59,7 @@ def get_efficacy_futility_thresholds(
     return efficacy_thresholds, futility_thresholds
 
 
-def get_efficacy_thresholds_by_monte_carlo(
+def get_efficacy_thresholds_by_monte_carlo(              # UDI: remove _by_monte_carlo from the name?
     samples_statistics_h0: npt.NDArray[np.float64],
     spending_function: npt.NDArray[np.float64],
 ) -> npt.NDArray[np.float64]:                            # UDI: define shapes and meanings of inputs and output
@@ -83,7 +83,8 @@ def get_efficacy_thresholds_by_monte_carlo(
         m = np.floor(n_trials * cur_spending).astype(int)
         cur_look_samples = np.where(surviving_trials, samples_statistics[:, i], -np.inf)
 
-        thresholds[i] = np.partition(cur_look_samples, n_trials - m - 1)[
+        # UDI: as this is inelegant, and used several times, perhaps define a small aux. function to find the k-th value by size in a 1-d array
+        thresholds[i] = np.partition(cur_look_samples, n_trials - m - 1)[ 
             n_trials - m - 1
         ]
 
@@ -100,7 +101,7 @@ def get_efficacy_thresholds_by_monte_carlo(
     return thresholds
 
 
-def get_futility_thresholds(
+def get_futility_thresholds(         # UDI: should this be run only after the previous function?
     samples_statistics_h1: npt.NDArray[np.float64],
     spending_function: npt.NDArray[np.float64],
     efficacy_thresholds: npt.NDArray[np.float64],
@@ -159,8 +160,8 @@ def get_efficacy_futility_thresholds_binding(
     """
     get the efficacy and futility thresholds using Monte Carlo simulation.
     We assume that futility is binding, meaning that if the futility threshold is crossed, the trial most stop.
-    This requires a different and slightly more complicated algorithm than in the non-binding case.
-    The inputs and outputs are the same as get_efficacy_futility_thresholds_by_monte_carlo.
+    This requires a different and slightly more complicated algorithm than in the non-binding case.               # UDI: "... that computes both types of threshold together."
+    The inputs and outputs are the same as get_efficacy_futility_thresholds_by_monte_carlo.                       # UDI: you probably mean get_efficacy_futility_thresholds 
     """
     n_trials, n_treatment_arms, n_looks = samples_statistics_h0.shape
 
@@ -213,7 +214,7 @@ def get_efficacy_futility_thresholds_binding(
             survivors_h1 = survivors_h1 & surviving_trials_h1[:, np.newaxis]
             n_surviving_trials_h0_new = np.sum(surviving_trials_h0)
             n_surviving_trials_h1 = np.sum(surviving_trials_h1)
-            extra_alpha_spending = max(
+            extra_alpha_spending = max(  # UDI: 5 lines for this... perhaps define auxiliary variable above, say (n_surviving_trials_h0_new - n_surviving_trials_h0) / n_trials
                 alpha_spending_cur
                 - (n_surviving_trials_h0 - n_surviving_trials_h0_new) / n_trials,
                 0.0,
@@ -232,7 +233,7 @@ def get_efficacy_futility_thresholds_binding(
                 survivors_h1, samples_statistics_h1[:, :, i], -np.inf
             )
             max_cur_samples_h1 = np.max(cur_samples_h1, axis=1)
-            futility_thresholds[i] = np.partition(
+            futility_thresholds[i] = np.partition( 
                 max_cur_samples_h1, n_trials - n_surviving_trials_h1 + m
             )[n_trials - n_surviving_trials_h1 + m]
             survivors_h1 = survivors_h1 & (cur_samples_h1 >= futility_thresholds[i])
