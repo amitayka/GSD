@@ -18,7 +18,7 @@ def generate_bayesian_samples(
     The trial is a binomial trial and the samples are generated using an approximation of the Bayesian probability
     of the treatment arm being better than the control arm.
     The approximation is done using a normal distribution, following Cook, "Fast approximation of Beta inequalities".
-    returns samples_statistics: shape (n_trials, n_arms, n_looks)
+    returns samples_statistics: shape (n_trials, n_arms, n_looks)   # UDI: explain what the entries are (CDFs ?)
     """
     n_arms = rate_per_arm.shape[0]
     n_looks = n_samples_per_look_per_arm.shape[0]
@@ -67,6 +67,7 @@ def get_bayesian_probability_approximation(
     n_successes_treatment: shape (n_trials,)
     n_samples_control: int, number of samples in the control arm
     n_samples_treatment: int, number of samples in the treatment arm
+    # UDI: document return value (meaning, shape, ...)
     """
     (
         hyperparam_mean_control,
@@ -106,7 +107,7 @@ def get_bayesian_approximation(
     following Cook, "Fast approximation of Beta inequalities".
     n_successes: shape (n_trials,)
     n_samples: int, number of samples in the trial
-    returns hyperparam_mean, hyperparam_std
+    returns hyperparam_mean, hyperparam_std    # UDI: of shape ...
     """
 
     hyperparam_alpha = prior_hyperparam_alpha + n_successes
