@@ -81,7 +81,7 @@ def get_bayesian_probability_approximation(
     (
         hyperparam_mean_treatment,
         hyperparam_std_treatment,
-    ) = get_bayesian_approximation2(
+    ) = get_bayesian_approximation(
         n_successes_treatment,
         n_samples_treatment,
         prior_hyperparam_alpha,

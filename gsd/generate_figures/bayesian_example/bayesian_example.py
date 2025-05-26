@@ -1,4 +1,5 @@
 # gsd code for article - bayesian multi arm
+import pickle
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -9,59 +10,75 @@ import numpy as np
 import scipy as sp
 from scipy.optimize import differential_evolution
 
-from gsd.basic_code.find_good_hsd_spending_functions import find_best_hsd_spending
+from gsd.basic_code.find_best_general_spending import \
+    find_best_general_spending
+from gsd.basic_code.find_good_hsd_spending_functions import (
+    find_best_hsd_spending, find_beta_for_alpha)
 from gsd.basic_code.gsd_statistics_calculator import (
-    GSDStatistics,
-    get_statistics_given_thresholds,
-)
-from gsd.basic_code.gsd_threshold_finder_algorithm_1 import (
-    get_efficacy_futility_thresholds,
-)
-from gsd.basic_code.utils.bayesian_approximation import generate_bayesian_samples
-from gsd.basic_code.utils.find_fixed_sample_size import (
-    find_fixed_sample_size_for_bayesian_endpoint,
-)
-from gsd.basic_code.utils.spending_function import (
-    generate_spending_from_spending_parameter,
-)
+    GSDStatistics, get_statistics_given_thresholds)
+from gsd.basic_code.gsd_threshold_finder_algorithm_1 import \
+    get_efficacy_futility_thresholds
+from gsd.basic_code.utils.bayesian_approximation import \
+    generate_bayesian_samples
+from gsd.basic_code.utils.find_fixed_sample_size import \
+    find_fixed_sample_size_for_bayesian_endpoint
+from gsd.basic_code.utils.spending_function import \
+    generate_spending_from_spending_parameter
 
-N_TRIALS_FOR_VERIFY = 10_000_000
+N_TRIALS_FOR_VERIFY = 10_000_000  # change to 10_000_000 for final version
+
+N_TRIALS1 = 10_000
+REPEATS1 = 1
+# N_TRIALS2 = 200_000
+# REPEATS2 = 1
+N_TRIALS_BEST_THRESHOLDS = 10_000
+REPEATS_BEST_THRESHOLDS = 1
+
+N_SCENARIOS_PER_OPTION = 1
+
+# N_TRIALS1 = 10_000
+# REPEATS1 = 1
+# N_TRIALS2 = 10_000
+# REPEATS2 = 1
+
 
 
 @dataclass
 class InputParameters:
-    arm_parameters_h0: np.ndarray
-    arm_parameters_h1: np.ndarray
+    rate_per_arm_h0: np.ndarray
+    rate_per_arm_h1: np.ndarray
     alpha: float
     power: float
-    look_fractions: np.ndarray
+    looks_fractions: np.ndarray
     sample_size_multiplier: float
     is_binding: bool
+    option_name: str = "default"
 
     def __post_init__(self):
-        self.n_looks = len(self.look_fractions)
-        self.n_arms = len(self.arm_parameters_h0) + 1
+        self.n_looks = len(self.looks_fractions)
+        self.n_arms = len(self.rate_per_arm_h0)
+        self.beta = 1 - self.power
+
         self.fixed_size_per_arm = find_fixed_sample_size_for_bayesian_endpoint(
             alpha=self.alpha,
             power=self.power,
-            rate_per_arm_h0=self.arm_parameters_h0,
-            rate_per_arm_h1=self.arm_parameters_h1,
+            rate_per_arm_h0=self.rate_per_arm_h0,
+            rate_per_arm_h1=self.rate_per_arm_h1,
             seed=42,
-            verbose=False,
         )
-        self.fixed_sample_size = self.fixed_size_per_arm * self.n_arms
+        self.fixed_size = self.fixed_size_per_arm * self.n_arms
         self.n_samples = (
-            int(self.fixed_sample_size * self.sample_size_multiplier)
+            int(self.fixed_size * self.sample_size_multiplier)
             // self.n_arms
             * self.n_arms
         )
         self.n_samples_per_look_total = (
-            (self.n_samples * self.look_fractions).astype(int)
+            (self.n_samples * self.looks_fractions).astype(int)
             // self.n_arms
             * self.n_arms
         )
         self.n_samples_per_arm_per_look = self.n_samples_per_look_total // self.n_arms
-        self.look_fractions = (
+        self.looks_fractions = (
             self.n_samples_per_arm_per_look / self.n_samples_per_arm_per_look[-1]
         )
 
@@ -76,6 +93,7 @@ class AlgorithmName(Enum):
 @dataclass
 class OptimizationParameters:
     algorithm: AlgorithmName
+    name: str
     seed: int
     n_trials: int
 
@@ -91,8 +109,28 @@ class OptimizationResult:
     ess_alt: float
     cost: float
     type_I_error: float
+    non_binding_type_I_error: float
     power: float
     time: float  # Time taken for the optimization run
+
+
+@dataclass
+class OptimizationRun:
+    input_parameters: InputParameters
+    optimization_parameters: OptimizationParameters
+    result: OptimizationResult
+
+
+def save_optimization_runs(runs: list[OptimizationRun], filename: str):
+    """Serialize and save a list of OptimizationRun objects to a file."""
+    with open(filename, "wb") as f:
+        pickle.dump(runs, f)
+
+
+def load_optimization_runs(filename: str) -> list[OptimizationRun]:
+    """Load and deserialize a list of OptimizationRun objects from a file."""
+    with open(filename, "rb") as f:
+        return pickle.load(f)
 
 
 ###################################################################################################
@@ -107,13 +145,13 @@ def generate_samples(
     rng = np.random.default_rng(optimization_parameters.seed)
     samples_h0 = generate_bayesian_samples(
         n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
-        rate_per_arm=input_parameters.arm_parameters_h0,
+        rate_per_arm=input_parameters.rate_per_arm_h0,
         n_trials=optimization_parameters.n_trials,
         rng=rng,
     )
     samples_h1 = generate_bayesian_samples(
         n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
-        rate_per_arm=input_parameters.arm_parameters_h1,
+        rate_per_arm=input_parameters.rate_per_arm_h1,
         n_trials=optimization_parameters.n_trials,
         rng=rng,
     )
@@ -126,7 +164,7 @@ def generate_samples(
 def find_best_hsd_alpha_beta_spending(
     input_parameters: InputParameters,
     optimization_parameters: OptimizationParameters,
-    print_tables=False,
+    print_output=False,
     verbose=False,
 ):
     start = time.time()
@@ -138,10 +176,10 @@ def find_best_hsd_alpha_beta_spending(
     ) = find_best_hsd_spending(
         samples_h0,
         samples_h1,
-        input_parameters.look_fractions,
+        input_parameters.looks_fractions,
         input_parameters.n_samples_per_arm_per_look,
         input_parameters.alpha,
-        input_parameters.beta,
+        1 - input_parameters.power,
         input_parameters.is_binding,
         seed=optimization_parameters.seed,
         verbose=verbose,
@@ -150,23 +188,23 @@ def find_best_hsd_alpha_beta_spending(
     best_alpha_spending = generate_spending_from_spending_parameter(
         best_alpha_spending_parameter,
         input_parameters.alpha,
-        input_parameters.look_fractions,
+        input_parameters.looks_fractions,
     )
     best_beta_spending = generate_spending_from_spending_parameter(
         best_beta_spending_parameter,
         input_parameters.beta,
-        input_parameters.look_fractions,
+        input_parameters.looks_fractions,
     )
 
     samples_h0_verify = generate_bayesian_samples(
         n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
-        rate_per_arm=input_parameters.arm_parameters_h0,
+        rate_per_arm=input_parameters.rate_per_arm_h0,
         n_trials=N_TRIALS_FOR_VERIFY,
         rng=np.random.default_rng(optimization_parameters.seed),
     )
     samples_h1_verify = generate_bayesian_samples(
         n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
-        rate_per_arm=input_parameters.arm_parameters_h1,
+        rate_per_arm=input_parameters.rate_per_arm_h1,
         n_trials=N_TRIALS_FOR_VERIFY,
         rng=np.random.default_rng(optimization_parameters.seed),
     )
@@ -177,8 +215,14 @@ def find_best_hsd_alpha_beta_spending(
             samples_h1_verify,
             best_alpha_spending,
             best_beta_spending,
-            is_binding=optimization_parameters.is_binding,
+            is_binding=input_parameters.is_binding,
         )
+    )
+    best_stats_h0_without_futility = get_statistics_given_thresholds(
+        samples_h0_verify,
+        efficacy_thresholds=best_efficacy_thresholds,
+        futility_thresholds=np.zeros_like(best_futility_thresholds),
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     best_stats_h0 = get_statistics_given_thresholds(
         samples_h0_verify,
@@ -204,12 +248,13 @@ def find_best_hsd_alpha_beta_spending(
         efficacy_thresholds=best_efficacy_thresholds,
         ess_null=best_stats_h0.average_sample_size,
         ess_alt=best_stats_h1.average_sample_size,
+        non_binding_type_I_error=best_stats_h0_without_futility.disjunctive_power,
         type_I_error=best_stats_h0.disjunctive_power,
         power=best_stats_h1.disjunctive_power,
         time=time.time() - start,
     )
 
-    if print_tables:
+    if print_output:
         print("========================================")
         print("Best alpha and beta spending parameters:")
         print("========================================")
@@ -383,9 +428,10 @@ class ParametersStatistics:
 
 
 def print_alpha_beta_graphs(
-    input_parameters: InputParameters, n_trials: int = 100_000, seed: int = 42
+    input_parameters: InputParameters, optimization_parameters: OptimizationParameters
 ):
-    
+    start = time.time()
+    samples_h0, samples_h1 = generate_samples(input_parameters, optimization_parameters)
 
     alpha_parameter_space = np.concatenate(
         (
@@ -403,37 +449,45 @@ def print_alpha_beta_graphs(
             alpha_spending_parameter=alpha_spending_parameter,
             samples_h0=samples_h0,
             samples_h1=samples_h1,
-            looks_fractions=looks_fractions,
-            n_samples_per_arm_per_look=n_samples_per_arm_per_look,
-            alpha=alpha,
-            beta=beta,
-            is_binding=is_binding,
+            looks_fractions=input_parameters.looks_fractions,
+            n_samples_per_arm_per_look=input_parameters.n_samples_per_arm_per_look,
+            alpha=input_parameters.alpha,
+            beta=input_parameters.beta,
+            is_binding=input_parameters.is_binding,
         )
 
         alpha_spending = generate_spending_from_spending_parameter(
-            alpha_spending_parameter, alpha, looks_fractions
+            alpha_spending_parameter,
+            input_parameters.alpha,
+            input_parameters.looks_fractions,
         )
         beta_spending = generate_spending_from_spending_parameter(
-            beta_spending_parameter, beta, looks_fractions
+            beta_spending_parameter,
+            input_parameters.beta,
+            input_parameters.looks_fractions,
         )
         # alpha_spending = np.zeros_like(alpha_spending)
         # alpha_spending[-1] = alpha
         # beta_spending = np.zeros_like(beta_spending)
         # beta_spending[-1] = beta
         efficacy_thresholds, futility_thresholds = get_efficacy_futility_thresholds(
-            samples_h0, samples_h1, alpha_spending, beta_spending, is_binding=is_binding
+            samples_h0,
+            samples_h1,
+            alpha_spending,
+            beta_spending,
+            is_binding=input_parameters.is_binding,
         )
         stats_h1 = get_statistics_given_thresholds(
             samples_h1,
             efficacy_thresholds,
             futility_thresholds,
-            n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+            n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
         )
         stats_h0 = get_statistics_given_thresholds(
             samples_h0,
             efficacy_thresholds,
             futility_thresholds,
-            n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+            n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
         )
 
         results.append(
@@ -524,7 +578,7 @@ def print_alpha_beta_graphs(
     # alpha_parameter_vs_error_rates
     fig, ax1 = plt.subplots(figsize=(14, 6), dpi=800)
     plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
-    max_sample_size = n_samples_per_look_total[-1]
+    max_sample_size = input_parameters.n_samples_per_look_total[-1]
 
     # Define the bar width
     bar_width = 0.35
@@ -557,7 +611,9 @@ def print_alpha_beta_graphs(
     )
 
     # Add a horizontal line for fixed_size
-    ax1.axhline(y=fixed_size, color="r", linestyle="--", label="Fixed Size")
+    ax1.axhline(
+        y=input_parameters.fixed_size, color="r", linestyle="--", label="Fixed Size"
+    )
     ax1.axhline(y=max_sample_size, color="b", linestyle="--", label="Max Sample Size")
 
     # Add labels, title, and legend for the first y-axis
@@ -570,6 +626,7 @@ def print_alpha_beta_graphs(
 
     # Display the plot
     plt.savefig("average_sample_size.eps", format="eps")
+    print(f"Time to generate alpha-beta graphs = {time.time() - start:.2f} seconds")
 
 
 ################################################################################################
@@ -577,67 +634,106 @@ def print_alpha_beta_graphs(
 ################################################################################################
 
 
-def find_constant_thresholds_binding():
+def find_constant_thresholds_binding(
+    input_parameters: InputParameters,
+    optimization_parameters: OptimizationParameters,
+    verbose=False,
+):
+    start = time.time()
     n_iterations = 25
     efficacy_threshold_lower = 0.9
     efficacy_threshold_upper = 1
+    samples_h0, samples_h1 = generate_samples(input_parameters, optimization_parameters)
     for i in range(n_iterations):
         mid_value = (efficacy_threshold_lower + efficacy_threshold_upper) / 2
-        efficacy_thresholds_constant = np.array([mid_value] * len(looks_fractions))
-        futility_thresholds_constant = np.array([0.0] * len(looks_fractions))
+        efficacy_thresholds_constant = np.array(
+            [mid_value] * len(input_parameters.looks_fractions)
+        )
+        futility_thresholds_constant = np.array(
+            [0.0] * len(input_parameters.looks_fractions)
+        )
         stats_h0 = get_statistics_given_thresholds(
             samples_h0,
             efficacy_thresholds_constant,
             futility_thresholds_constant,
-            n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+            n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
         )
         type_I_error = np.sum(stats_h0.efficacy_probs_trial_per_look)
-        if type_I_error > alpha:
+        if type_I_error > input_parameters.alpha:
             efficacy_threshold_lower = mid_value
         else:
             efficacy_threshold_upper = mid_value
     efficacy_thresholds_constant = np.array(
-        [efficacy_threshold_upper] * len(looks_fractions)
+        [efficacy_threshold_upper] * len(input_parameters.looks_fractions)
     )
     futility_threshold_lower = 0
     futility_threshold_upper = 0.9
     for i in range(n_iterations):
         mid_value = (futility_threshold_lower + futility_threshold_upper) / 2
-        futility_thresholds_constant = np.array([mid_value] * len(looks_fractions))
+        futility_thresholds_constant = np.array(
+            [mid_value] * len(input_parameters.looks_fractions)
+        )
         stats_h1 = get_statistics_given_thresholds(
             samples_h1,
             efficacy_thresholds_constant,
             futility_thresholds_constant,
-            n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+            n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
         )
         power = np.sum(stats_h1.efficacy_probs_trial_per_look)
-        if power > 1 - beta:
+        if power > 1 - input_parameters.beta:
             futility_threshold_lower = mid_value
         else:
             futility_threshold_upper = mid_value
+    stats_h0_with_futility = get_statistics_given_thresholds(
+        samples_h0,
+        efficacy_thresholds_constant,
+        np.zeros_like(futility_thresholds_constant),
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+    )
+
     stats_h0 = get_statistics_given_thresholds(
         samples_h0,
         efficacy_thresholds_constant,
         futility_thresholds_constant,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     stats_h1 = get_statistics_given_thresholds(
         samples_h1,
         efficacy_thresholds_constant,
         futility_thresholds_constant,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
-    print("===============================")
-    print("Constant bounds:")
-    print("===============================")
-    print(f"efficacy_thresholds_constant = {efficacy_thresholds_constant}")
-    print(f"futility_thresholds_constant = {futility_thresholds_constant}")
-    print(f"actual type I error = {np.sum(stats_h0.efficacy_probs_trial_per_look)}")
-    print(f"efficacy_probs_trial_per_look = {stats_h0.efficacy_probs_trial_per_look}")
-    print(f"actual power = {np.sum(stats_h1.efficacy_probs_trial_per_look)}")
-    print(f"efficacy_probs_trial_per_look = {stats_h1.efficacy_probs_trial_per_look}")
-    print(f"average_sample_size_h0 = {stats_h0.average_sample_size}")
-    print(f"average_sample_size_h1 = {stats_h1.average_sample_size}")
+    if verbose:
+        print("===============================")
+        print("Constant bounds:")
+        print("===============================")
+        print(f"efficacy_thresholds_constant = {efficacy_thresholds_constant}")
+        print(f"futility_thresholds_constant = {futility_thresholds_constant}")
+        print(f"actual type I error = {np.sum(stats_h0.efficacy_probs_trial_per_look)}")
+        print(
+            f"efficacy_probs_trial_per_look = {stats_h0.efficacy_probs_trial_per_look}"
+        )
+        print(f"actual power = {np.sum(stats_h1.efficacy_probs_trial_per_look)}")
+        print(
+            f"efficacy_probs_trial_per_look = {stats_h1.efficacy_probs_trial_per_look}"
+        )
+        print(f"average_sample_size_h0 = {stats_h0.average_sample_size}")
+        print(f"average_sample_size_h1 = {stats_h1.average_sample_size}")
+
+    return OptimizationResult(
+        alpha_spending_parameter=None,
+        beta_spending_parameter=None,
+        nfev=None,
+        futility_thresholds=futility_thresholds_constant,
+        efficacy_thresholds=efficacy_thresholds_constant,
+        ess_null=stats_h0.average_sample_size,
+        ess_alt=stats_h1.average_sample_size,
+        cost=0.5 * stats_h0.average_sample_size + 0.5 * stats_h1.average_sample_size,
+        non_binding_type_I_error=stats_h0_with_futility.disjunctive_power,
+        type_I_error=stats_h0.disjunctive_power,
+        power=stats_h1.disjunctive_power,
+        time=time.time() - start,
+    )
 
 
 #################################################################################################
@@ -645,61 +741,99 @@ def find_constant_thresholds_binding():
 #################################################################################################
 
 
-def find_best_general_spending_function():
+def find_best_general_spending_function(
+    input_parameters: InputParameters,
+    optimization_parameters: OptimizationParameters,
+    verbose=False,
+    print_output=False,
+):
     start = time.time()
+    samples_h0, samples_h1 = generate_samples(input_parameters, optimization_parameters)
     alpha_spending, beta_spending, differential_evolution_result = (
         find_best_general_spending(
             samples_h0=samples_h0,
             samples_h1=samples_h1,
-            looks_fractions=looks_fractions,
-            n_samples_per_arm_per_look=n_samples_per_arm_per_look,
-            alpha=alpha,
-            beta=beta,
-            is_binding=is_binding,
-            seed=1729,
+            looks_fractions=input_parameters.looks_fractions,
+            n_samples_per_arm_per_look=input_parameters.n_samples_per_arm_per_look,
+            alpha=input_parameters.alpha,
+            beta=input_parameters.beta,
+            is_binding=input_parameters.is_binding,
+            seed=optimization_parameters.seed,
             verbose=verbose,
         )
+    )
+    samples_h0_verify = generate_bayesian_samples(
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+        rate_per_arm=input_parameters.rate_per_arm_h0,
+        n_trials=N_TRIALS_FOR_VERIFY,
+        rng=np.random.default_rng(optimization_parameters.seed),
+    )
+    samples_h1_verify = generate_bayesian_samples(
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+        rate_per_arm=input_parameters.rate_per_arm_h1,
+        n_trials=N_TRIALS_FOR_VERIFY,
+        rng=np.random.default_rng(optimization_parameters.seed),
     )
     (
         efficacy_thresholds_differential_evolution,
         futility_thresholds_differential_evolution,
     ) = get_efficacy_futility_thresholds(
-        samples_h0,
-        samples_h1,
+        samples_h0_verify,
+        samples_h1_verify,
         alpha_spending,
         beta_spending,
-        is_binding=is_binding,
+        is_binding=input_parameters.is_binding,
+    )
+    stats_h0_without_futility = get_statistics_given_thresholds(
+        samples_h0_verify,
+        efficacy_thresholds_differential_evolution,
+        futility_thresholds=np.zeros_like(futility_thresholds_differential_evolution),
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     stats_h0 = get_statistics_given_thresholds(
-        samples_h0,
+        samples_h0_verify,
         efficacy_thresholds_differential_evolution,
         futility_thresholds_differential_evolution,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     stats_h1 = get_statistics_given_thresholds(
-        samples_h1,
+        samples_h1_verify,
         efficacy_thresholds_differential_evolution,
         futility_thresholds_differential_evolution,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
-
-    print("===============================")
-    print("Best spending functions found:")
-    print("===============================")
-    print(f"Time to find spending function = {time.time()-start:.2f} seconds")
-    print(f"number of function evaluations = {differential_evolution_result.nfev}")
-    print(f"alpha_spending_differential_evolution = {alpha_spending}")
-    print(f"beta_spending_differential_evolution = {beta_spending}")
-    print(
-        f"efficacy_thresholds_differential_evolution = {efficacy_thresholds_differential_evolution}"
+    if print_output:
+        print("===============================")
+        print("Best spending functions found:")
+        print("===============================")
+        print(f"Time to find spending function = {time.time()-start:.2f} seconds")
+        print(f"number of function evaluations = {differential_evolution_result.nfev}")
+        print(f"alpha_spending_differential_evolution = {alpha_spending}")
+        print(f"beta_spending_differential_evolution = {beta_spending}")
+        print(
+            f"efficacy_thresholds_differential_evolution = {efficacy_thresholds_differential_evolution}"
+        )
+        print(
+            f"futility_thresholds_differential_evolution = {futility_thresholds_differential_evolution}"
+        )
+        print(f"actual type I error = {np.sum(stats_h0.efficacy_probs_trial_per_look)}")
+        print(f"actual power = {np.sum(stats_h1.efficacy_probs_trial_per_look)}")
+        print(f"average_sample_size_h0 = {stats_h0.average_sample_size}")
+        print(f"average_sample_size_h1 = {stats_h1.average_sample_size}")
+    return OptimizationResult(
+        alpha_spending_parameter=differential_evolution_result.x[0],
+        beta_spending_parameter=differential_evolution_result.x[1],
+        nfev=differential_evolution_result.nfev,
+        futility_thresholds=futility_thresholds_differential_evolution,
+        efficacy_thresholds=efficacy_thresholds_differential_evolution,
+        ess_null=stats_h0.average_sample_size,
+        ess_alt=stats_h1.average_sample_size,
+        cost=0.5 * stats_h0.average_sample_size + 0.5 * stats_h1.average_sample_size,
+        non_binding_type_I_error=stats_h0_without_futility.disjunctive_power,
+        type_I_error=stats_h0.disjunctive_power,
+        power=stats_h1.disjunctive_power,
+        time=time.time() - start,
     )
-    print(
-        f"futility_thresholds_differential_evolution = {futility_thresholds_differential_evolution}"
-    )
-    print(f"actual type I error = {np.sum(stats_h0.efficacy_probs_trial_per_look)}")
-    print(f"actual power = {np.sum(stats_h1.efficacy_probs_trial_per_look)}")
-    print(f"average_sample_size_h0 = {stats_h0.average_sample_size}")
-    print(f"average_sample_size_h1 = {stats_h1.average_sample_size}")
 
 
 ################################################################################################
@@ -710,33 +844,41 @@ def find_best_general_spending_function():
 function_evaluations = 0
 
 
-def objective_function_thresholds(input: np.ndarray):
+def objective_function_thresholds(
+    input: np.ndarray,
+    input_parameters: InputParameters,
+    samples_h0,
+    samples_h1,
+    verbose=False,
+):
     global function_evaluations
     function_evaluations += 1
-    assert input.shape[0] == 2 * len(looks_fractions) - 1
+    assert input.shape[0] == 2 * len(input_parameters.looks_fractions) - 1
 
-    logit_futility_thresholds = input[: len(looks_fractions)]
-    diffs = input[len(looks_fractions) :]
+    logit_futility_thresholds = input[: len(input_parameters.looks_fractions)]
+    diffs = input[len(input_parameters.looks_fractions) :]
     logit_efficacy_thresholds = logit_futility_thresholds + np.concatenate((diffs, [0]))
     futility_thresholds = sp.special.expit(logit_futility_thresholds)
     efficacy_thresholds = sp.special.expit(logit_efficacy_thresholds)
-    if is_binding:
+    if input_parameters.is_binding:
         futility_thresholds_for_type_I_error = futility_thresholds
     else:
-        futility_thresholds_for_type_I_error = np.zeros(len(looks_fractions))
+        futility_thresholds_for_type_I_error = np.zeros(
+            len(input_parameters.looks_fractions)
+        )
 
     stats_h0_for_alpha = get_statistics_given_thresholds(
         samples_h0,
         efficacy_thresholds,
         futility_thresholds_for_type_I_error,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     type_I_error = np.sum(stats_h0_for_alpha.efficacy_probs_trial_per_look)
     if verbose:
         print(
             f"evaluations= {function_evaluations}, input = {input}, futility_thresholds = {futility_thresholds}, efficacy_thresholds = {efficacy_thresholds}, type_I_error = {type_I_error}"
         )
-    if type_I_error > alpha:
+    if type_I_error > input_parameters.alpha:
         if verbose:
             print(f"type I error = {type_I_error}")
         return 10000 * (3 - type_I_error)
@@ -745,10 +887,10 @@ def objective_function_thresholds(input: np.ndarray):
         samples_h1,
         efficacy_thresholds,
         futility_thresholds,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     power = np.sum(stats_h1.efficacy_probs_trial_per_look)
-    if power < 1 - beta:
+    if power < 1 - input_parameters.beta:
         if verbose:
             print(f"type I error = {type_I_error},power = {power}")
         return 10000 * (2 - power)
@@ -756,7 +898,7 @@ def objective_function_thresholds(input: np.ndarray):
         samples_h0,
         efficacy_thresholds,
         futility_thresholds,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     if verbose:
         print(
@@ -765,244 +907,311 @@ def objective_function_thresholds(input: np.ndarray):
     return stats_h1.average_sample_size + stats_h0.average_sample_size
 
 
-def find_best_thresholds(samples_h0, samples_h1):
+def find_best_thresholds(
+    input_parameters, optimization_parameters, verbose=False, print_output=False
+):
     max_prob = 0.999  # for efficacy
     min_prob = 0.1  # for futility
+    global function_evaluations
+    function_evaluations = 0
+    samples_h0, samples_h1 = generate_samples(input_parameters, optimization_parameters)
     min_logit = float(np.log(min_prob / (1 - min_prob)))
     max_logit = float(np.log(max_prob / (1 - max_prob)))
-    bounds = [(min_logit, max_logit)] * len(looks_fractions) + [
+    bounds = [(min_logit, max_logit)] * len(input_parameters.looks_fractions) + [
         (0.0, max_logit - min_logit)
-    ] * (len(looks_fractions) - 1)
+    ] * (len(input_parameters.looks_fractions) - 1)
     bounds = np.array(bounds)
     start = time.time()
+
+    def objective_function_thresholds_wrapper(input):
+        return objective_function_thresholds(
+            input,
+            input_parameters,
+            samples_h0,
+            samples_h1,
+            verbose=verbose,
+        )
+
     differential_evolution_result = differential_evolution(
-        objective_function_thresholds, bounds
+        objective_function_thresholds_wrapper, bounds
     )
     input = differential_evolution_result.x
-    logit_futility_thresholds = input[: len(looks_fractions)]
-    diffs = input[len(looks_fractions) :]
+    logit_futility_thresholds = input[: len(input_parameters.looks_fractions)]
+    diffs = input[len(input_parameters.looks_fractions) :]
     logit_efficacy_thresholds = logit_futility_thresholds + np.concatenate((diffs, [0]))
     futility_thresholds = sp.special.expit(logit_futility_thresholds)
     efficacy_thresholds = sp.special.expit(logit_efficacy_thresholds)
+    samples_h0_verify = generate_bayesian_samples(
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+        rate_per_arm=input_parameters.rate_per_arm_h0,
+        n_trials=N_TRIALS_FOR_VERIFY,
+        rng=np.random.default_rng(optimization_parameters.seed),
+    )
+    samples_h1_verify = generate_bayesian_samples(
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+        rate_per_arm=input_parameters.rate_per_arm_h1,
+        n_trials=N_TRIALS_FOR_VERIFY,
+        rng=np.random.default_rng(optimization_parameters.seed),
+    )
+    stats_h0_without_futility = get_statistics_given_thresholds(
+        samples_h0_verify,
+        efficacy_thresholds,
+        np.zeros_like(futility_thresholds),
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+    )
+
     stats_h0 = get_statistics_given_thresholds(
-        samples_h0,
+        samples_h0_verify,
         efficacy_thresholds,
         futility_thresholds,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     stats_h1 = get_statistics_given_thresholds(
-        samples_h1,
+        samples_h1_verify,
         efficacy_thresholds,
         futility_thresholds,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
-    print("===========================")
-    print("Best thresholds found:")
-    print("===========================")
-    print(f"Time to find thresholds = {time.time()-start:.2f} seconds")
-    print(
-        f"differential evolution function evaluations = {differential_evolution_result.nfev}"
+    if print_output:
+        print("===========================")
+        print("Best thresholds found:")
+        print("===========================")
+        print(f"Time to find thresholds = {time.time()-start:.2f} seconds")
+        print(
+            f"differential evolution function evaluations = {differential_evolution_result.nfev}"
+        )
+        print(f"efficacy_thresholds = {efficacy_thresholds}")
+        print(f"futility_thresholds = {futility_thresholds}")
+        print(f"actual type I error = {np.sum(stats_h0.efficacy_probs_trial_per_look)}")
+        print(f"actual power = {np.sum(stats_h1.efficacy_probs_trial_per_look)}")
+        print(f"average_sample_size_h0 = {stats_h0.average_sample_size}")
+        print(f"average_sample_size_h1 = {stats_h1.average_sample_size}")
+    return OptimizationResult(
+        alpha_spending_parameter=None,
+        beta_spending_parameter=None,
+        nfev=differential_evolution_result.nfev,
+        time=time.time() - start,
+        futility_thresholds=futility_thresholds,
+        efficacy_thresholds=efficacy_thresholds,
+        ess_null=stats_h0.average_sample_size,
+        ess_alt=stats_h1.average_sample_size,
+        cost=0.5 * stats_h0.average_sample_size + 0.5 * stats_h1.average_sample_size,
+        non_binding_type_I_error=stats_h0_without_futility.disjunctive_power,
+        type_I_error=stats_h0.disjunctive_power,
+        power=stats_h1.disjunctive_power,
     )
-    print(f"efficacy_thresholds = {efficacy_thresholds}")
-    print(f"futility_thresholds = {futility_thresholds}")
-    print(f"actual type I error = {np.sum(stats_h0.efficacy_probs_trial_per_look)}")
-    print(f"actual power = {np.sum(stats_h1.efficacy_probs_trial_per_look)}")
-    print(f"average_sample_size_h0 = {stats_h0.average_sample_size}")
-    print(f"average_sample_size_h1 = {stats_h1.average_sample_size}")
 
 
-def analyze_scenario(
-    arm_parameters_h0: np.ndarray,
-    arm_parameters_h1: np.ndarray,
-    alpha: float,
-    power: float,
-    look_fractions: np.ndarray,
-    n_trials: int,
-    seed: int = 1729,
+def generate_tables_for_input_parameters(input_parameters: InputParameters):
+    optimization_parameters = OptimizationParameters(
+        algorithm="hsd",
+        name="generate_tables",
+        seed=1729,
+        n_trials=1_000_000,
+    )
+    find_best_hsd_alpha_beta_spending(
+        input_parameters=input_parameters,
+        optimization_parameters=optimization_parameters,
+        print_output=True,
+        verbose=False,
+    )
+    print_alpha_beta_graphs(
+        input_parameters=input_parameters,
+        optimization_parameters=optimization_parameters,
+    )
+
+
+def generate_tables():
+    input_parameters = InputParameters(
+        rate_per_arm_h0=np.array([0.5, 0.5, 0.5, 0.5]),
+        rate_per_arm_h1=np.array([0.5, 0.7, 0.6, 0.55]),
+        alpha=0.025,
+        power=0.8,
+        looks_fractions=np.array([0.3, 0.5, 0.7, 1.0]),
+        sample_size_multiplier=1.15,
+        is_binding=False,
+    )
+    generate_tables_for_input_parameters(input_parameters)
+
+
+def run_scenario(
+    input_parameters: InputParameters,
+    filename: Optional[str],
     verbose: bool = False,
-    print_tables: bool = False,
+    base_seed = 1729,
 ):
-    n_arms = len(arm_parameters_h1)
-    assert len(arm_parameters_h0) == n_arms
-    n_looks = len(look_fractions)
-
-    fixed_size_per_arm = find_fixed_sample_size_for_bayesian_endpoint(
-        alpha=alpha,
-        power=power,
-        rate_per_arm_h0=arm_parameters_h0,
-        rate_per_arm_h1=arm_parameters_h1,
-        seed=seed,
-        verbose=verbose,
+    optimization_parameters_list = (
+        [
+            OptimizationParameters(
+                algorithm="hsd",
+                name=f"0 find_best_hsd_spending_n_trials_{N_TRIALS1}",
+                seed=i + base_seed,
+                n_trials=N_TRIALS1,
+            )
+            for i in range(REPEATS1)
+        ]
+        # + [
+        #     OptimizationParameters(
+        #         algorithm="hsd",
+        #         name=f"1 find_best_hsd_spending_n_trials_{N_TRIALS2}",
+        #         seed=i + base_seed,
+        #         n_trials=N_TRIALS2,
+        #     )
+        #     for i in range(REPEATS2)
+        # ]
+        + [
+            OptimizationParameters(
+                algorithm="find_best_general_spending",
+                name=f"1 find_best_general_spending_n_trials_{N_TRIALS1}",
+                seed=i + base_seed,
+                n_trials=N_TRIALS1,
+            )
+            for i in range(REPEATS1)
+        ]
+        # + [
+        #     OptimizationParameters(
+        #         algorithm="find_best_general_spending",
+        #         name=f"find_best_general_spending_n_trials_{N_TRIALS2}",
+        #         seed=i,
+        #         n_trials=N_TRIALS2,
+        #     )
+        #     for i in range(REPEATS2)
+        # ]
+        + [
+            OptimizationParameters(
+                algorithm="2 find_best_thresholds",
+                name=f"find_best_thresholds_n_trials_{N_TRIALS_BEST_THRESHOLDS}",
+                seed=i + base_seed,
+                n_trials=N_TRIALS_BEST_THRESHOLDS,
+            )
+            for i in range(REPEATS_BEST_THRESHOLDS)
+        ]
+        + [
+            OptimizationParameters(
+                algorithm="3 constant_thresholds_binding",
+                name=f"find_best_thresholds_n_trials_{N_TRIALS1}",
+                seed=i + base_seed,
+                n_trials=N_TRIALS1,
+            )
+            for i in range(REPEATS_BEST_THRESHOLDS)
+        ]
     )
-    fixed_sample_size = fixed_size_per_arm * n_arms
-    n_samples = int(fixed_sample_size * sample_size_multiplier) // n_arms * n_arms
-    n_samples_per_look_total = (
-        (n_samples * look_fractions).astype(int) // n_arms * n_arms
-    )
-    n_samples_per_arm_per_look = n_samples_per_look_total // n_arms
-    print(f"arm parameters = {arm_parameters_h1}")
-    print(f"fixed_size = {fixed_size}")
-    print(f"fixed_size per arm = {fixed_size // n_arms}")
-    print(f"sample size multiplier = {sample_size_multiplier}")
-    print(f"look_fractions = {looks_fractions}")
-    print(f"n_samples_per_look_total = {n_samples_per_look_total}")
-    print(f"n_samples_per_look_per_arm = {n_samples_per_look_total // n_arms}")
-    print(f"Is binding = {is_binding}")
-    samples_h0, samples_h1 = generate_samples()
-    find_best_hsd_alpha_beta_spending()
-    print_alpha_beta_graphs()
-    find_constant_thresholds_binding()
-    find_best_general_spending_function()
-    find_best_thresholds(samples_h0, samples_h1)
+    optimization_runs = []
+    for optimization_parameters in optimization_parameters_list:
+        if optimization_parameters.algorithm == "hsd":
+            result = find_best_hsd_alpha_beta_spending(
+                input_parameters=input_parameters,
+                optimization_parameters=optimization_parameters,
+                verbose=verbose,
+                print_output=False,
+            )
+        elif optimization_parameters.algorithm == "find_best_general_spending":
+            result = find_best_general_spending_function(
+                input_parameters=input_parameters,
+                optimization_parameters=optimization_parameters,
+                verbose=verbose,
+                print_output=False,
+            )
+        elif optimization_parameters.algorithm == "find_best_thresholds":
+            result = find_best_thresholds(
+                input_parameters=input_parameters,
+                optimization_parameters=optimization_parameters,
+                verbose=verbose,
+                print_output=False,
+            )
+        elif optimization_parameters.algorithm == "constant_thresholds_binding":
+            result = find_constant_thresholds_binding(
+                input_parameters=input_parameters,
+                optimization_parameters=optimization_parameters,
+                verbose=verbose,
+            )
+        else:
+            raise ValueError(f"Unknown algorithm: {optimization_parameters.algorithm}")
+        optimization_runs.append(
+            OptimizationRun(
+                input_parameters=input_parameters,
+                optimization_parameters=optimization_parameters,
+                result=result,
+            )
+        )
+        print(f"\nFinished run {optimization_parameters.name}")
+        print(f"Function evaluations = {result.nfev}")
+        print(f"Time = {result.time:.2f} seconds")
+        print(f"Average sample size under H0 = {result.ess_null:.2f}")
+        print(f"Average sample size under H1 = {result.ess_alt:.2f}")
+        print(f"Cost = {result.cost:.2f}")
+        print(
+            f"Type I error = {result.type_I_error:.4f} (non-binding = {result.non_binding_type_I_error:.4f})"
+        )
+        print(f"Power = {result.power:.4f}")
+
+        if filename is not None:
+            save_optimization_runs(optimization_runs, filename)
+    return optimization_runs
 
 
-# alpha = 0.025
-# beta = 0.2
-# power = 1 - beta
+def compare_multiple_scenarios():
+    alpha = 0.025
+    power = 0.8
+    p0 = 0.5
+    p3 = 0.55
+    p2 = 0.6
+    p1 = 0.7
+    p4 = 0.8
 
-# p0 = 0.5
-# p3 = 0.55
-# p2 = 0.6
-# p1 = 0.7
+    sample_size_multiplier = 1.15
 
-# rate_per_arm_h1 = np.array([p0, p1, p2, p3])
-# rate_per_arm_h0 = np.array([p0, p0, p0, p0])
 
-# seed = 1729
+    input_parameters_list = []
+    for n_looks in range(3, 6):
+        for is_binding in [False, True]:
+            for n_arms in range(2, 5):
+                for j in range(N_SCENARIOS_PER_OPTION):
+                    if n_looks == 2:
+                        looks_fractions = np.array([0.5, 1.0])
+                    else:
+                        looks_fractions = np.linspace(0.3, 1.0, n_looks)
+                    rate_per_arm_h0 = np.full(n_arms, p0)
 
-# n_trials = 1_000_000  # should be 1000000, but can use smaller number for testing
-# sample_size_multiplier = 1.15
+                    rate_per_arm_h1 = np.array([0.5])
+                    rate_per_arm_h1 = np.append(
+                        rate_per_arm_h1,
+                        np.random.choice(
+                            [p1, p2, p3, p4], size=n_arms - 1, replace=True
+                        ),
+                    )
+                    print(
+                        f"n_arms: {n_arms}, n_looks: {n_looks}, is_binding: {is_binding}"
+                    )
+                    print(f"looks_fractions: {looks_fractions}")
+                    print(f"h1 rates: {rate_per_arm_h1}")
+                    input_parameters_list.append(
+                        InputParameters(
+                            rate_per_arm_h0=rate_per_arm_h0,
+                            rate_per_arm_h1=rate_per_arm_h1,
+                            alpha=alpha,
+                            power=power,
+                            looks_fractions=looks_fractions,
+                            sample_size_multiplier=sample_size_multiplier,
+                            is_binding=is_binding,
+                            option_name=f"n_arms_{n_arms}_n_looks_{n_looks}_is_binding_{is_binding}",
+                        )
+                    )
+                    print(f"fixed sample size: {input_parameters_list[-1].fixed_size}")
 
-# is_binding = False
+    for i, input_parameters in enumerate(input_parameters_list):
+        print(
+            f"Running scenario {i+1}/{len(input_parameters_list)}: {input_parameters.option_name}"
+        )
 
-# looks_fractions = np.array([0.3, 0.5, 0.7, 1])
-# verbose = False
+        filename = f"scenario_{i+1}.json"
+        run_scenario(
+            input_parameters=input_parameters,
+            filename=filename,
+            verbose=False,
+        )
 
-# Non-Binding Output:
-# arm parameters = [[0.5 ]
-#  [0.7 ]
-#  [0.6 ]
-#  [0.55]]
-# fixed_size = 468
-# fixed_size per arm = 117
-# sample size multiplier = 1.15
-# look_fractions = [0.3 0.5 0.7 1. ]
-# n_samples_per_look_total = [160 268 372 536]
-# n_samples_per_look_per_arm = [ 40  67  93 134]
-# Time to generate samples = 71.33 seconds
-# ========================================
-# Best alpha and beta spending parameters:
-# ========================================
-# Time to find hsd spending function = 331.26 seconds
-# number of function evaluations =  453
-# best_alpha_spending_parameter =  -1.3278071760852683
-# best_beta_spending_parameter =  -1.2821354132893799
-# best_alpha_spending_parameter = -1.3278071760852683
-# best_beta_spending_parameter = -1.2821354132893799
-# best_alpha_spending = [0.00441215 0.00408443 0.00532676 0.01117665]
-# best_beta_spending = [0.03602359 0.03297745 0.04261691 0.08838204]
-# best_efficacy_thresholds = [0.99882722 0.99787663 0.9976659  0.99332793]
-# best_futility_thresholds = [0.59183833 0.80867878 0.93130259 0.99332793]
-# best_alpha_spending_parameter = -1.3278071760852683. best_beta_spending_parameter = -1.2821354132893799
-# best_stats_h0.average_sample_size = 275.175363 (Relative to fixed: 0.5879815448717949)
-# best_stats_h1.average_sample_size = 342.16691999999995 (Relative to fixed: 0.7311258974358973)
-# ===============================
-# Constant bounds:
-# ===============================
-# efficacy_thresholds_constant = [0.99727044 0.99727044 0.99727044 0.99727044]
-# futility_thresholds_constant = [2.68220901e-08 2.68220901e-08 2.68220901e-08 2.68220901e-08]
-# actual type I error = 0.024411
-# efficacy_probs_trial_per_look = [0.008268 0.007168 0.004745 0.00423 ]
-# actual power = 0.77213
-# efficacy_probs_trial_per_look = [0.21048  0.200476 0.167988 0.193186]
-# average_sample_size_h0 = 570.192028
-# average_sample_size_h1 = 415.5819200000001
-# ===============================
-# Best spending functions found:
-# ===============================
-# Time to find spending function = 2041.04 seconds
-# number of function evaluations = 3157
-# alpha_spending_differential_evolution = [0.00197222 0.00582137 0.00651243 0.01069398]
-# beta_spending_differential_evolution = [0.04792871 0.03165346 0.0251041  0.09531374]
-# efficacy_thresholds_differential_evolution = [0.9995089  0.99771612 0.99633448 0.99340519]
-# futility_thresholds_differential_evolution = [0.67377698 0.81003449 0.90814002 0.99340519]
-# actual type I error = 0.022057
-# actual power = 0.8001670000000001
-# average_sample_size_h0 = 267.24591599999997
-# average_sample_size_h1 = 337.086801
-# ===========================
-# Best thresholds found:
-# ===========================
-# Time to find thresholds = 8215.98 seconds
-# differential evolution function evaluations = 17753
-# efficacy_thresholds = [0.99889331 0.9976776  0.99782773 0.99328937]
-# futility_thresholds = [0.67267502 0.80145916 0.90954739 0.99328937]
-# actual type I error = 0.022149000000000002
-# actual power = 0.80034
-# average_sample_size_h0 = 271.02232000000004
-# average_sample_size_h1 = 337.6241730000001
 
-# Binding Output:
-# arm parameters = [[0.5 ]
-#  [0.7 ]
-#  [0.6 ]
-#  [0.55]]
-# fixed_size = 468
-# fixed_size per arm = 117
-# sample size multiplier = 1.15
-# look_fractions = [0.3 0.5 0.7 1. ]
-# n_samples_per_look_total = [160 268 372 536]
-# n_samples_per_look_per_arm = [ 40  67  93 134]
-# Is binding = True
-# Time to generate samples = 68.21 seconds
-# ========================================
-# Best alpha and beta spending parameters:
-# ========================================
-# Time to find hsd spending function = 508.34 seconds
-# number of function evaluations =  693
-# best_alpha_spending_parameter =  -3.0495427906498493
-# best_beta_spending_parameter =  0.7047530053272499
-# best_alpha_spending_parameter = -3.0495427906498493
-# best_beta_spending_parameter = 0.7047530053272499
-# best_alpha_spending = [0.00186071 0.00260829 0.00479994 0.01573106]
-# best_beta_spending = [0.07535875 0.04208    0.03654783 0.04601341]
-# best_efficacy_thresholds = [0.9995089  0.99930741 0.99770385 0.98699327]
-# best_futility_thresholds = [0.74970676 0.85354892 0.93284394 0.98699327]
-# best_alpha_spending_parameter = -3.0495427906498493. best_beta_spending_parameter = 0.7047530053272499
-# best_stats_h0.average_sample_size = 251.711965 (Relative to fixed: 0.5378460790598291)
-# best_stats_h1.average_sample_size = 336.67780100000004 (Relative to fixed: 0.7193970106837608)
-# ===============================
-# Constant bounds:
-# ===============================
-# efficacy_thresholds_constant = [0.99727044 0.99727044 0.99727044 0.99727044]
-# futility_thresholds_constant = [2.68220901e-08 2.68220901e-08 2.68220901e-08 2.68220901e-08]
-# actual type I error = 0.024411
-# efficacy_probs_trial_per_look = [0.008268 0.007168 0.004745 0.00423 ]
-# actual power = 0.77213
-# efficacy_probs_trial_per_look = [0.21048  0.200476 0.167988 0.193186]
-# average_sample_size_h0 = 570.192028
-# average_sample_size_h1 = 415.5819200000001
-# ===============================
-# Best spending functions found:
-# ===============================
-# Time to find spending function = 6060.97 seconds
-# number of function evaluations = 4147
-# alpha_spending_differential_evolution = [0.00288709 0.00564093 0.00573721 0.01073478]
-# beta_spending_differential_evolution = [0.04786609 0.07286729 0.01759404 0.06167258]
-# efficacy_thresholds_differential_evolution = [0.99948629 0.99766113 0.99638859 0.99052228]
-# futility_thresholds_differential_evolution = [0.67377698 0.88979895 0.90878878 0.99052228]
-# actual type I error = 0.024901
-# actual power = 0.800741
-# average_sample_size_h0 = 258.57577000000003
-# average_sample_size_h1 = 328.338384
-# ===========================
-# Best thresholds found:
-# ===========================
-# Time to find thresholds = 59715.67 seconds
-# differential evolution function evaluations = 23423
-# efficacy_thresholds = [0.99958638 0.99803038 0.99663432 0.99056285]
-# futility_thresholds = [0.74799867 0.78690785 0.92667282 0.99056285]
-# actual type I error = 0.02446
-# actual power = 0.801138
-# average_sample_size_h0 = 261.882071
-# average_sample_size_h1 = 334.6357349999999
+if __name__ == "__main__":
+    # generate_tables()
+    compare_multiple_scenarios()
