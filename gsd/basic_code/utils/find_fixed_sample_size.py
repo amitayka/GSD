@@ -4,7 +4,7 @@ from gsd.basic_code.utils.bayesian_approximation import generate_bayesian_sample
 
 n_trials_list = [10_000, 50_000, 200_000, 1_000_000, 5_000_000]
 
-multiplier_list = [2, 1.5, 1.2, 1.1, 1.05]
+multiplier_list = [2, 1.5, 1.2, 1.1, 1.05]     # UDI: add comment for what is a multiplier
 
 
 def get_power_given_sample_size(
@@ -22,7 +22,7 @@ def get_power_given_sample_size(
         rng=rng,
     )[
         :, :, 0
-    ]  # shape (n_trials, n_arms), since we can ignore the last look
+    ]  # shape (n_trials, n_arms), since we can ignore the last look         # UDI: it's not "since we can ignore the last look", but we have no looks, only final
     maximal_sample_h0 = np.max(samples_h0, axis=1)
     threshold = np.quantile(maximal_sample_h0, 1 - alpha)
     samples_h1 = generate_bayesian_samples(
@@ -32,20 +32,20 @@ def get_power_given_sample_size(
         rng=rng,
     )[
         :, :, 0
-    ]  # shape (n_trials, n_arms), since we can ignore the last look
+    ]  # shape (n_trials, n_arms), since we can ignore the last look         # UDI: see above
     maximal_sample_h1 = np.max(samples_h1, axis=1)
 
     return np.mean(maximal_sample_h1 > threshold)
 
 
-def find_fixed_sample_size_for_bayesian_endpoint(
+def find_fixed_sample_size_for_bayesian_endpoint(   # UDI: give n_trials_list and multiplier_list as parameters, not globals
     alpha: float,
     power: float,
     rate_per_arm_h0: np.ndarray,
     rate_per_arm_h1: np.ndarray,
     seed: int = 1729,
     verbose=False,
-):
+):                                                  # UDI: add return type
     sample_size = 150  # some initial guess
     rng = np.random.default_rng(seed)
     for i, multiplier in enumerate(multiplier_list):
@@ -123,12 +123,14 @@ def find_fixed_sample_size_for_bayesian_endpoint(
             sample_size = sample_size_upper_bound
         else:
             sample_size = sample_size_lower_bound
+        # UDI: add a printout (if verbose) with final sample size, power
 
     return sample_size
 
 
 rates_h0 = np.array([0.5, 0.5, 0.5])
 rates_h1 = np.array([0.5, 0.6, 0.7])
+# UDI: move n_trials_list and multiplier_list to here and give explicitly
 if __name__ == "__main__":
     print(
         f"Sample size for alpha=0.05, power=0.8, rates_h0={rates_h0}, rates_h1={rates_h1}, n_trials={n_trials}:",
