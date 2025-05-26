@@ -9,7 +9,7 @@ def generate_spending_from_spending_function(
     """
     generate the spending value at each look from the spending function.
     f: the spending function. Should satisfy f(0)=0 and f(1)=alpha, where alpha is the total value needed to be spent.
-    look_fractions: the fraction of the total sample size/ information at each look.
+    look_fractions: the fraction of the total sample size (or of the information) at each look.      # UDI: I reworded here
     Returns: 1D array shape (n_looks) which is the spending values at each interval.
     """
     n_looks = len(look_fractions)
@@ -26,6 +26,7 @@ def generate_spending_from_spending_parameter(
     gamma: float, alpha: float, look_fractions: npt.NDArray[np.float64]
 ) -> npt.NDArray[np.float64]:
     """
+    # UDI: copied docstring, irrelevant!
     generate the spending value at each look from the spending function.
     f: the spending function. Should satisfy f(0)=0 and f(1)=alpha, where alpha is the total value needed to be spent.
     look_fractions: the fraction of the total sample size/ information at each look.
@@ -35,7 +36,7 @@ def generate_spending_from_spending_parameter(
     assert look_fractions[-1] == 1
     assert np.all(np.diff(look_fractions) > 0)
 
-    def f_HSD(x):
+    def f_HSD(x):    # UDI: add comment, HSD = Hwang-...
         if np.abs(gamma) < 0.00001:
             return alpha * x
         return alpha * (1 - np.exp(-gamma * x)) / (1 - np.exp(-gamma))
