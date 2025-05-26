@@ -62,7 +62,7 @@ def get_efficacy_futility_thresholds(
 def get_efficacy_thresholds_by_monte_carlo(
     samples_statistics_h0: npt.NDArray[np.float64],
     spending_function: npt.NDArray[np.float64],
-) -> npt.NDArray[np.float64]:
+) -> npt.NDArray[np.float64]:                            # UDI: define shapes and meanings of inputs and output
     n_trials, _, n_looks = samples_statistics_h0.shape
     assert len(spending_function) == n_looks
     samples_statistics = np.max(samples_statistics_h0, axis=1)
@@ -70,8 +70,8 @@ def get_efficacy_thresholds_by_monte_carlo(
     surviving_trials = np.full(n_trials, True, dtype=bool)
     n_surviving_trials = np.sum(surviving_trials)
 
-    # If we didn't spend all the alpha, we can use it in the next look. This is used
-    # mainly in the discrete case.
+    # If we didn't spend all the alpha, we can use it in the next look. 
+    # This is used mainly in the discrete case.                          # UDI: changed line break
     extra_spending = 0.0
 
     for i in range(0, n_looks):
@@ -104,7 +104,7 @@ def get_futility_thresholds(
     samples_statistics_h1: npt.NDArray[np.float64],
     spending_function: npt.NDArray[np.float64],
     efficacy_thresholds: npt.NDArray[np.float64],
-) -> npt.NDArray[np.float64]:
+) -> npt.NDArray[np.float64]:                          # UDI: define shapes and meanings of inputs and output
     n_trials, n_treatment_arms, n_looks = samples_statistics_h1.shape
     thresholds = np.full(n_looks, -np.inf)
 
