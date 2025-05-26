@@ -10,6 +10,7 @@ from gsd.basic_code.utils.spending_function import (
     generate_spending_from_spending_parameter,
 )
 
+# UDI: see my comments for find_best_general_spending.py (type hints, shapes, meaning of variables; explain weird cost for low power) 
 
 def find_best_hsd_spending(
     samples_h0: npt.NDArray[np.float64],
