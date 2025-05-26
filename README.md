@@ -17,6 +17,7 @@ The main code for the project is located in the `gsd/basic_code` folder, which c
 - **`utils/`**: A subfolder containing utility scripts:
   - **`utils/bayesian_approximation.py`**: Compute approximated Bayesian statistics of multiarm binomial trials.
   - **`utils/spending_function.py`**: Helper functions for spending function calculations.
+  - **`utils/find_fixed_sample_size.py`**: ...      # UDI: complete here
 
 ### Other Folders and Files
 
