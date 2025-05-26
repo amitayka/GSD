@@ -10,7 +10,6 @@ from gsd.basic_code.utils.spending_function import (
     generate_spending_from_spending_parameter,
 )
 
-# UDI: see my comments for find_best_general_spending.py (type hints, shapes, meaning of variables; explain weird cost for low power) 
 
 def find_best_hsd_spending(
     samples_h0: npt.NDArray[np.float64],
@@ -30,7 +29,7 @@ def find_best_hsd_spending(
     The function uses 2D differential evolution to optimize the spending strategy.
     samples_h0: 3D array of shape (n_trials, n_treatment_arms, n_looks) for the null hypothesis.
     samples_h1: 3D array of shape (n_trials, n_treatment_arms, n_looks) for the alternative hypothesis.
-    looks_fractions: 1D array of shape (n_looks) representing the fraction of the total sample size at each look.
+    looks_fractions: 1D array of shape (n_looks) the fraction of the total sample size (or of the information) at each look.
     n_samples_per_arm_per_look: 1D array of shape (n_looks) representing the number of samples per arm at each look.
     alpha: float, the total spending value for the null hypothesis.
     beta: float, the total spending value for the alternative hypothesis.
@@ -39,13 +38,23 @@ def find_best_hsd_spending(
     alt_weight: float, weight for the alternative hypothesis in the objective function.
     seed: int, random seed for reproducibility.
     verbose: bool, whether to print the optimization process.
-    Returns: tuple of (alpha_spending_parameter, beta_spending_parameter, result), where result is the
-        result of the differential evolution optimization.
+    Returns: tuple of
+        alpha_spending_parameter: float, the optimized alpha spending parameter.
+        beta_spending_parameter: float, the optimized beta spending parameter.
+        differential_evolution_result: the result of the differential evolution optimization.
     """
     global func_evaluations
     func_evaluations = 0
 
     def objective_function(params: np.ndarray) -> float:
+        """
+        This function is the objective function for the differential evolution optimization.
+        It calculates the cost based on the spending strategies and the samples for the null and alternative hypotheses.
+        params: 1D array of shape (2,), where the first element is the alpha spending parameter
+                    and the second element is the beta spending parameter.
+        Returns: a float value representing the cost, which is the sum of the average sample sizes for
+                    the null and alternative hypotheses.
+        """
         global func_evaluations
         func_evaluations += 1
         alpha_spending_parameter = params[0]
@@ -82,7 +91,9 @@ def find_best_hsd_spending(
                     "power = ",
                     power,
                 )
-            return 10000 * (2 - power)
+            return 10000 * (
+                2 - power
+            )  # return a large cost if the power is too low, punishing lower power
         stats_h0 = get_statistics_given_thresholds(
             samples_h0,
             efficacy_thresholds,

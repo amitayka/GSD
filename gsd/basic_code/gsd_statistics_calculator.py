@@ -29,7 +29,8 @@ class GSDStatistics:
     average_sample_size: float  # the average sample size of the trial
 
     def __post_init__(self):
-        # UDI: this is potentially confusing - efficacy_probs_trial_per_look is already "disjunctive", the summation here is not the source of it
+        # Calculate the disjunctive power, which is the sum of the efficacy probabilities across all looks
+        # i.e, the total probability of stopping for efficacy.
         self.disjunctive_power = np.sum(self.efficacy_probs_trial_per_look)
 
 
@@ -42,7 +43,7 @@ def get_statistics_given_thresholds(
     """
     Return various statistics of the trial, given the efficacy and futility thresholds.
     parameters:
-    samples_statistics: 3D array, of shape (n_trials, n_treatment_arms, n_looks).   # UDI: added space
+    samples_statistics: 3D array, of shape (n_trials, n_treatment_arms, n_looks).
     efficacy_thresholds: 1D array, of shape (n_looks).
     futility_thresholds: 1D array, of shape (n_looks).
     n_samples_per_look_per_arm: 1D array, of shape (n_looks).
@@ -71,24 +72,22 @@ def get_statistics_given_thresholds(
 
     for j in range(n_looks):
         for i in range(n_treatment_arms):
-            stopped_arm_for_efficacy_at_look[:, i, j] = np.bitwise_and(   # UDI: can use & instead of np.bitwise_and ; at least use logical_and
-                samples_statistics[:, i, j] > efficacy_thresholds[j],
-                ~stopped_arm_so_far[:, i],
+            stopped_arm_for_efficacy_at_look[:, i, j] = (
+                samples_statistics[:, i, j] > efficacy_thresholds[j]
+            ) & ~stopped_arm_so_far[:, i]
+            stopped_arm_so_far[:, i] = (
+                stopped_arm_so_far[:, i] | stopped_arm_for_efficacy_at_look[:, i, j]
             )
-            stopped_arm_so_far[:, i] = np.bitwise_or(                     # UDI: can use | instead of np.bitwise_or  ; at least use logical_or
-                stopped_arm_so_far[:, i], stopped_arm_for_efficacy_at_look[:, i, j]
-            )
-            stopped_arm_for_futility_at_look[:, i, j] = np.bitwise_and(
-                samples_statistics[:, i, j] < futility_thresholds[j],
-                ~stopped_arm_so_far[:, i],
-            )
+            stopped_arm_for_futility_at_look[:, i, j] = (
+                samples_statistics[:, i, j] < futility_thresholds[j]
+            ) & ~stopped_arm_so_far[:, i]
             if j == n_looks - 1:
-                stopped_arm_for_futility_at_look[:, i, j] = np.bitwise_or(
-                    stopped_arm_for_futility_at_look[:, i, j],
-                    ~stopped_arm_so_far[:, i],
+                stopped_arm_for_futility_at_look[:, i, j] = (
+                    stopped_arm_for_futility_at_look[:, i, j]
+                    | ~stopped_arm_so_far[:, i]
                 )
-            stopped_arm_so_far[:, i] = np.bitwise_or(
-                stopped_arm_so_far[:, i], stopped_arm_for_futility_at_look[:, i, j]
+            stopped_arm_so_far[:, i] = (
+                stopped_arm_so_far[:, i] | stopped_arm_for_futility_at_look[:, i, j]
             )
 
         # trial stopped if all arms stopped
@@ -96,15 +95,11 @@ def get_statistics_given_thresholds(
             stopped_arm_for_efficacy_at_look[:, :, j], axis=1
         )
 
-        stopped_trial_so_far = np.bitwise_or(
-            stopped_trial_so_far, stopped_for_efficacy_at_look[:, j]
+        stopped_trial_so_far = stopped_trial_so_far | stopped_for_efficacy_at_look[:, j]
+        stopped_for_futility_at_look[:, j] = (
+            np.all(stopped_arm_so_far, axis=1) & ~stopped_trial_so_far
         )
-        stopped_for_futility_at_look[:, j] = np.bitwise_and(
-            np.all(stopped_arm_so_far, axis=1), ~stopped_trial_so_far
-        )
-        stopped_trial_so_far = np.bitwise_or(
-            stopped_trial_so_far, stopped_for_futility_at_look[:, j]
-        )
+        stopped_trial_so_far = stopped_trial_so_far | stopped_for_futility_at_look[:, j]
 
         for i in range(n_treatment_arms):
             stopped_arm_for_futility_at_look[:, i, j] = np.where(
@@ -112,9 +107,7 @@ def get_statistics_given_thresholds(
                 stopped_arm_for_futility_at_look[:, i, j],
                 stopped_trial_so_far,
             )
-            stopped_arm_so_far[:, i] = np.bitwise_or(
-                stopped_arm_so_far[:, i], stopped_trial_so_far
-            )
+            stopped_arm_so_far[:, i] = stopped_arm_so_far[:, i] | stopped_trial_so_far
 
     efficacy_probs_per_arm_per_look = np.mean(
         stopped_arm_for_efficacy_at_look, axis=0

@@ -2,9 +2,15 @@ import numpy as np
 
 from gsd.basic_code.utils.bayesian_approximation import generate_bayesian_samples
 
-n_trials_list = [10_000, 50_000, 200_000, 1_000_000, 5_000_000]
+N_TRIALS_LIST_DEFAULT = [10_000, 50_000, 200_000, 1_000_000, 5_000_000]
 
-multiplier_list = [2, 1.5, 1.2, 1.1, 1.05]     # UDI: add comment for what is a multiplier
+MULTIPLIER_LIST_DEFAULT = [
+    2,
+    1.5,
+    1.2,
+    1.1,
+    1.05,
+]  # a multiplier is an initial factor by which the sample size is increased or decreased
 
 
 def get_power_given_sample_size(
@@ -22,7 +28,7 @@ def get_power_given_sample_size(
         rng=rng,
     )[
         :, :, 0
-    ]  # shape (n_trials, n_arms), since we can ignore the last look         # UDI: it's not "since we can ignore the last look", but we have no looks, only final
+    ]  # shape (n_trials, n_arms), since we only have one look
     maximal_sample_h0 = np.max(samples_h0, axis=1)
     threshold = np.quantile(maximal_sample_h0, 1 - alpha)
     samples_h1 = generate_bayesian_samples(
@@ -32,20 +38,40 @@ def get_power_given_sample_size(
         rng=rng,
     )[
         :, :, 0
-    ]  # shape (n_trials, n_arms), since we can ignore the last look         # UDI: see above
+    ]  # shape (n_trials, n_arms), since we only have one look
     maximal_sample_h1 = np.max(samples_h1, axis=1)
 
     return np.mean(maximal_sample_h1 > threshold)
 
 
-def find_fixed_sample_size_for_bayesian_endpoint(   # UDI: give n_trials_list and multiplier_list as parameters, not globals
+def find_fixed_sample_size_for_bayesian_endpoint(
     alpha: float,
     power: float,
     rate_per_arm_h0: np.ndarray,
     rate_per_arm_h1: np.ndarray,
+    n_trials_list: list = N_TRIALS_LIST_DEFAULT,
+    multiplier_list: list = MULTIPLIER_LIST_DEFAULT,
     seed: int = 1729,
     verbose=False,
-):                                                  # UDI: add return type
+) -> int:
+    """
+    Find the fixed sample size for a Bayesian endpoint.
+    This function uses a binary search approach to find the sample size that achieves the desired power
+    given the rates under the null and alternative hypotheses.
+    The number of simulation trials is controlled by n_trials_list, and the sample size is adjusted
+    using the multipliers from multiplier_list. We start with a small number of trials and increase it to get better precision.
+    Parameters:
+    alpha: float, the significance level for the test.
+    power: float, the desired power of the test.
+    rate_per_arm_h0: 1D array of shape (n_arms,), the rates under the null hypothesis for each arm.
+    rate_per_arm_h1: 1D array of shape (n_arms,), the rates under the alternative hypothesis for each arm.
+    n_trials_list: list of integers, the number of trials to simulate for each multiplier.
+    multiplier_list: list of floats, the multipliers to adjust the sample size.
+    seed: int, the random seed for reproducibility.
+    verbose: bool, whether to print detailed information during the search.
+    Returns:
+    int: the minimal sample size that achieves the desired power.
+    """
     sample_size = 150  # some initial guess
     rng = np.random.default_rng(seed)
     for i, multiplier in enumerate(multiplier_list):
@@ -123,17 +149,17 @@ def find_fixed_sample_size_for_bayesian_endpoint(   # UDI: give n_trials_list an
             sample_size = sample_size_upper_bound
         else:
             sample_size = sample_size_lower_bound
-        # UDI: add a printout (if verbose) with final sample size, power
+    if verbose:
+        print(f"Final sample_size={sample_size}")
 
     return sample_size
 
 
 rates_h0 = np.array([0.5, 0.5, 0.5])
 rates_h1 = np.array([0.5, 0.6, 0.7])
-# UDI: move n_trials_list and multiplier_list to here and give explicitly
 if __name__ == "__main__":
     print(
-        f"Sample size for alpha=0.05, power=0.8, rates_h0={rates_h0}, rates_h1={rates_h1}, n_trials={n_trials}:",
+        f"Sample size for alpha=0.05, power=0.8, rates_h0={rates_h0}, rates_h1={rates_h1}:",
         find_fixed_sample_size_for_bayesian_endpoint(
             alpha=0.025,
             power=0.8,

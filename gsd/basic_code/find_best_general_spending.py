@@ -10,7 +10,7 @@ from gsd.basic_code.gsd_threshold_finder_algorithm_1 import (
 
 def convert_simple_parameter_to_spending_function(
     simple_parameter: np.ndarray, alpha: float
-):                                                  # UDI: add return value type hint
+) -> np.ndarray:
     """
     Convert a simple parameter to spending.
     simple parameter: 1D array of shape (n_looks - 1)
@@ -28,12 +28,14 @@ def convert_simple_parameter_to_spending_function(
     return spending
 
 
-def convert_spending_function_to_simple_parameter(spending: np.ndarray, alpha: float):        # UDI: add return value type hint
+def convert_spending_function_to_simple_parameter(
+    spending: np.ndarray, alpha: float
+) -> np.ndarray:
     """
     converts the spending function to a simple parameter.
     spending: 1D array of shape (n_looks)
     alpha: the total spending value.
-    look_fractions: the fraction of the total sample size/ information at each look.          # UDI: REMOVE
+    Returns: 1D array of shape (n_looks - 1) which is the simple parameter values at each interval.
     """
     n_looks = len(spending)
     simple_parameter = np.zeros(n_looks - 1)
@@ -56,13 +58,13 @@ def find_best_general_spending(
     alt_weight: float = 0.5,
     seed: int = 1729,
     verbose=False,
-):                            # UDI: add return values type hint
+):
     """
     Find the best general spending strategy based on given parameters.
     The function uses differential evolution to optimize the spending strategy.
     samples_h0: 3D array of shape (n_trials, n_treatment_arms, n_looks) for the null hypothesis.
-    samples_h1: #D array of shape (n_trials, n_treatment_arms, n_looks) for the alternative hypothesis.
-    looks_fractions: 1D array of shape (n_looks) for the fractions of the total sample size/ information at each look.         # UDI: rephrase as I did elsewhere
+    samples_h1: 3D array of shape (n_trials, n_treatment_arms, n_looks) for the alternative hypothesis.
+    looks_fractions: 1D array of shape (n_looks) the fraction of the total sample size (or of the information) at each look.
     n_samples_per_arm_per_look: int, the number of samples per arm per look.
     alpha: float, the total spending value for the null hypothesis.
     beta: float, the total spending value for the alternative hypothesis.
@@ -71,12 +73,24 @@ def find_best_general_spending(
     alt_weight: float, the weight for the alternative hypothesis.
     seed: int, the random seed for reproducibility.
     verbose: bool, whether to print the evaluations and outputs.
-    Returns: a tuple of the best spending strategies for alpha and beta, and the result of the differential evolution.    # UDI: specify shapes where relevant
+    Returns: a tuple of
+        alpha_spending_differential_evolution: 1D array of shape (n_looks) for the best spending strategy for alpha.
+        beta_spending_differential_evolution: 1D array of shape (n_looks) for the best spending strategy for beta.
+        differential_evolution_result: the result of the differential evolution optimization.
     """
     global function_evaluations
     function_evaluations = 0
 
-    def objective_function_best_spending(input: np.ndarray): # UDI: define meaning of input, and meaning and type of return value (which seems like can be 2 different things ?!)
+    def objective_function_best_spending(
+        input: np.ndarray,
+    ) -> float:
+        """
+        This function is the objective function for the differential evolution optimization.
+        It calculates the cost based on the spending strategies and the samples for the null and alternative hypotheses.
+        input: 1D array of shape (2 * (n_looks - 1)), where the first half is the simple alpha spending and
+              the second half is the simple beta spending.
+        Returns: a float value representing the cost, which is the sum of the average sample sizes for the null and alternative hypotheses.
+        """
         global function_evaluations
         function_evaluations += 1
         assert len(input) == 2 * (len(looks_fractions) - 1)
@@ -101,7 +115,9 @@ def find_best_general_spending(
                 print(
                     f"evaluations= {function_evaluations}, input = {input}, output = {10000*( 2 - power)}"
                 )
-            return 10000 * (2 - power)                # UDI: why?? how does this play with cost? does 10000 stand for "much more than maximal sample size?  
+            return 10000 * (
+                2 - power
+            )  # return a large cost if the power is too low, punishing lower power
         stats_h0 = get_statistics_given_thresholds(
             samples_h0,
             efficacy_thresholds,

@@ -4,6 +4,18 @@ import numpy.typing as npt
 EPSILON = 1e-10
 
 
+def get_kth_value_by_size(
+    array: npt.NDArray[np.float64], k: int
+) -> npt.NDArray[np.float64]:
+    """
+    Get the k-th value by size in a 1D array.
+    array: 1D array of shape (n_samples,).
+    k: int, the index of the value to return.
+    Returns: the k-th value by size in the array.
+    """
+    return np.partition(array, k)[k]
+
+
 def check_samples_statistics(
     samples_statistics_h0: npt.NDArray[np.float64],
     samples_statistics_h1: npt.NDArray[np.float64],
@@ -44,25 +56,35 @@ def get_efficacy_futility_thresholds(
     """
     if is_binding:
         assert beta_spending is not None
-        return get_efficacy_futility_thresholds_binding(
+        return _get_efficacy_futility_thresholds_binding(
             samples_statistics_h0, samples_statistics_h1, alpha_spending, beta_spending
         )
     # In the non-binding case, we first find the efficacy thresholds, and then the futility thresholds.
-    efficacy_thresholds = get_efficacy_thresholds_by_monte_carlo(
+    efficacy_thresholds = _get_efficacy_thresholds(
         samples_statistics_h0, alpha_spending
     )
 
-    futility_thresholds = get_futility_thresholds(
+    futility_thresholds = _get_futility_thresholds_given_efficacy_thresholds(
         samples_statistics_h1, beta_spending, efficacy_thresholds
     )
 
     return efficacy_thresholds, futility_thresholds
 
 
-def get_efficacy_thresholds_by_monte_carlo(              # UDI: remove _by_monte_carlo from the name?
+def _get_efficacy_thresholds(
     samples_statistics_h0: npt.NDArray[np.float64],
     spending_function: npt.NDArray[np.float64],
-) -> npt.NDArray[np.float64]:                            # UDI: define shapes and meanings of inputs and output
+) -> npt.NDArray[np.float64]:
+    """
+    Get the efficacy thresholds using Monte Carlo simulation, for multiarm trials.
+    parameters:
+    samples_statistics_h0: 3D array, of shape (n_trials, n_treatment_arms, n_looks).
+        It is the samples statistics under the null hypothesis.
+    spending_function: 1D array, of shape (n_looks). It is the percentages of samples that are needed to be
+        removed from the top in each look.
+    Returns:
+    1D array, of shape (n_looks)- the efficacy thresholds.
+    """
     n_trials, _, n_looks = samples_statistics_h0.shape
     assert len(spending_function) == n_looks
     samples_statistics = np.max(samples_statistics_h0, axis=1)
@@ -70,8 +92,8 @@ def get_efficacy_thresholds_by_monte_carlo(              # UDI: remove _by_monte
     surviving_trials = np.full(n_trials, True, dtype=bool)
     n_surviving_trials = np.sum(surviving_trials)
 
-    # If we didn't spend all the alpha, we can use it in the next look. 
-    # This is used mainly in the discrete case.                          # UDI: changed line break
+    # If we didn't spend all the alpha, we can use it in the next look.
+    # This is used mainly in the discrete case.
     extra_spending = 0.0
 
     for i in range(0, n_looks):
@@ -83,14 +105,9 @@ def get_efficacy_thresholds_by_monte_carlo(              # UDI: remove _by_monte
         m = np.floor(n_trials * cur_spending).astype(int)
         cur_look_samples = np.where(surviving_trials, samples_statistics[:, i], -np.inf)
 
-        # UDI: as this is inelegant, and used several times, perhaps define a small aux. function to find the k-th value by size in a 1-d array
-        thresholds[i] = np.partition(cur_look_samples, n_trials - m - 1)[ 
-            n_trials - m - 1
-        ]
+        thresholds[i] = get_kth_value_by_size(cur_look_samples, n_trials - m - 1)
 
-        surviving_trials = np.bitwise_and(
-            surviving_trials, cur_look_samples <= thresholds[i]
-        )
+        surviving_trials = surviving_trials & (cur_look_samples <= thresholds[i])
         n_surviving_trials_tmp = np.sum(surviving_trials)
         extra_spending = max(
             cur_spending - (n_surviving_trials - n_surviving_trials_tmp) / n_trials,
@@ -101,11 +118,23 @@ def get_efficacy_thresholds_by_monte_carlo(              # UDI: remove _by_monte
     return thresholds
 
 
-def get_futility_thresholds(         # UDI: should this be run only after the previous function?
+def _get_futility_thresholds_given_efficacy_thresholds(
     samples_statistics_h1: npt.NDArray[np.float64],
     spending_function: npt.NDArray[np.float64],
     efficacy_thresholds: npt.NDArray[np.float64],
-) -> npt.NDArray[np.float64]:                          # UDI: define shapes and meanings of inputs and output
+) -> npt.NDArray[np.float64]:
+    """
+    Get the futility thresholds using Monte Carlo simulation, for multiarm trials.
+    We assume that the futility is non-binding, and that the efficacy thresholds were found before.
+    parameters:
+    samples_statistics_h1: 3D array, of shape (n_trials, n_treatment_arms, n_looks).
+        It is the samples statistics under the alternative hypothesis.
+    spending_function: 1D array, of shape (n_looks). It is the percentages of samples that are needed to be
+        removed from the bottom in each look.
+    efficacy_thresholds: 1D array, of shape (n_looks). It is the efficacy thresholds that were found before.
+    Returns:
+    1D array, of shape (n_looks)- the futility thresholds.
+    """
     n_trials, n_treatment_arms, n_looks = samples_statistics_h1.shape
     thresholds = np.full(n_looks, -np.inf)
 
@@ -134,9 +163,9 @@ def get_futility_thresholds(         # UDI: should this be run only after the pr
         cur_samples = np.where(survivors, samples_statistics_h1[:, :, i], -np.inf)
         max_cur_samples = np.max(cur_samples, axis=1)
 
-        thresholds[i] = np.partition(
+        thresholds[i] = get_kth_value_by_size(
             max_cur_samples, n_trials - n_surviving_trials + m
-        )[n_trials - n_surviving_trials + m]
+        )
         survivors = survivors & (samples_statistics_h1[:, :, i] >= thresholds[i])
 
         surviving_trials = np.any(survivors, axis=1)
@@ -151,7 +180,7 @@ def get_futility_thresholds(         # UDI: should this be run only after the pr
     return thresholds
 
 
-def get_efficacy_futility_thresholds_binding(
+def _get_efficacy_futility_thresholds_binding(
     samples_statistics_h0: npt.NDArray[np.float64],
     samples_statistics_h1: npt.NDArray[np.float64],
     alpha_spending: npt.NDArray[np.float64],
@@ -160,8 +189,8 @@ def get_efficacy_futility_thresholds_binding(
     """
     get the efficacy and futility thresholds using Monte Carlo simulation.
     We assume that futility is binding, meaning that if the futility threshold is crossed, the trial most stop.
-    This requires a different and slightly more complicated algorithm than in the non-binding case.               # UDI: "... that computes both types of threshold together."
-    The inputs and outputs are the same as get_efficacy_futility_thresholds_by_monte_carlo.                       # UDI: you probably mean get_efficacy_futility_thresholds 
+    This requires a different and slightly more complicated algorithm that computes both types of threshold together.
+    The inputs and outputs are the same as get_efficacy_futility_thresholds.
     """
     n_trials, n_treatment_arms, n_looks = samples_statistics_h0.shape
 
@@ -196,9 +225,9 @@ def get_efficacy_futility_thresholds_binding(
                 survivors_h0, samples_statistics_h0[:, :, i], -np.inf
             )
             max_cur_samples_h0 = np.max(cur_samples_h0, axis=1)
-            efficacy_thresholds[i] = np.partition(max_cur_samples_h0, n_trials - m - 1)[
-                n_trials - m - 1
-            ]
+            efficacy_thresholds[i] = get_kth_value_by_size(
+                max_cur_samples_h0, n_trials - m - 1
+            )
             surviving_trials_h0 = surviving_trials_h0 & (
                 max_cur_samples_h0 <= efficacy_thresholds[i]
             )
@@ -212,11 +241,15 @@ def get_efficacy_futility_thresholds_binding(
                 max_cur_samples_h1 <= efficacy_thresholds[i]
             )
             survivors_h1 = survivors_h1 & surviving_trials_h1[:, np.newaxis]
-            n_surviving_trials_h0_new = np.sum(surviving_trials_h0)
             n_surviving_trials_h1 = np.sum(surviving_trials_h1)
-            extra_alpha_spending = max(  # UDI: 5 lines for this... perhaps define auxiliary variable above, say (n_surviving_trials_h0_new - n_surviving_trials_h0) / n_trials
-                alpha_spending_cur
-                - (n_surviving_trials_h0 - n_surviving_trials_h0_new) / n_trials,
+
+            n_surviving_trials_h0_new = np.sum(surviving_trials_h0)
+            actual_alpha_spent = (
+                n_surviving_trials_h0 - n_surviving_trials_h0_new
+            ) / n_trials
+
+            extra_alpha_spending = max(
+                alpha_spending_cur - actual_alpha_spent,
                 0.0,
             )
             n_surviving_trials_h0 = n_surviving_trials_h0_new
@@ -233,9 +266,9 @@ def get_efficacy_futility_thresholds_binding(
                 survivors_h1, samples_statistics_h1[:, :, i], -np.inf
             )
             max_cur_samples_h1 = np.max(cur_samples_h1, axis=1)
-            futility_thresholds[i] = np.partition( 
+            futility_thresholds[i] = get_kth_value_by_size(
                 max_cur_samples_h1, n_trials - n_surviving_trials_h1 + m
-            )[n_trials - n_surviving_trials_h1 + m]
+            )
             survivors_h1 = survivors_h1 & (cur_samples_h1 >= futility_thresholds[i])
             surviving_trials_h1 = np.any(survivors_h1, axis=1)
 
