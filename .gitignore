@@ -14,6 +14,8 @@ __pycache__/
 
 .DS_Store
 settings.json
+*.json
+*.eps
 
 # Distribution / packaging
 .Python
