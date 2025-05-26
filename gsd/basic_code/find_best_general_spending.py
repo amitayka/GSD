@@ -52,6 +52,8 @@ def find_best_general_spending(
     alpha: float,
     beta: float,
     is_binding: bool,
+    null_weight: float = 0.5,
+    alt_weight: float = 0.5,
     seed: int = 1729,
     verbose=False,
 ):
@@ -65,6 +67,8 @@ def find_best_general_spending(
     alpha: float, the total spending value for the null hypothesis.
     beta: float, the total spending value for the alternative hypothesis.
     is_binding: bool, whether the spending strategy is binding or not.
+    null_weight: float, the weight for the null hypothesis.
+    alt_weight: float, the weight for the alternative hypothesis.
     seed: int, the random seed for reproducibility.
     verbose: bool, whether to print the evaluations and outputs.
     Returns: a tuple of the best spending strategies for alpha and beta, and the result of the differential evolution.
@@ -104,11 +108,15 @@ def find_best_general_spending(
             futility_thresholds,
             n_samples_per_look_per_arm=n_samples_per_arm_per_look,
         )
+        cost = (
+            null_weight * stats_h0.average_sample_size
+            + alt_weight * stats_h1.average_sample_size
+        )
         if verbose:
             print(
-                f"evaluations= {function_evaluations}, input = {input}, output = {stats_h1.average_sample_size + stats_h0.average_sample_size}"
+                f"evaluations= {function_evaluations}, input = {input}, output = {cost}"
             )
-        return stats_h1.average_sample_size + stats_h0.average_sample_size
+        return cost
 
     bounds = [(0, 1)] * (2 * (len(looks_fractions) - 1))
     differential_evolution_result = differential_evolution(

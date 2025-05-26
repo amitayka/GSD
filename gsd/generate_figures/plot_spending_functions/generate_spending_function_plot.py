@@ -23,7 +23,7 @@ x = np.linspace(0.0001, 1, 100)
 # Define the gamma values and corresponding function names
 gamma_values = [-20, -5, -2, 0, 2, 5, 20]
 print_location = [85, 70, 60, 50, 40, 30, 15]
-function_names = [r"$\gamma$=" + str(gamma) for gamma in gamma_values]
+function_names = [r"$\gamma=" + str(gamma) + "$" for gamma in gamma_values]
 
 # Define shades of red
 colorsCycle = plt.cm.Reds(np.linspace(0.3, 1, len(gamma_values)))

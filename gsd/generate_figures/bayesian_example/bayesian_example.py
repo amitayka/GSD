@@ -1,19 +1,15 @@
 # gsd code for article - bayesian multi arm
-import os
-import pickle
 import time
 from dataclasses import dataclass
+from enum import Enum
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
 from scipy.optimize import differential_evolution
 
-from gsd.basic_code.find_best_general_spending import find_best_general_spending
-from gsd.basic_code.find_good_hsd_spending_functions import (
-    find_best_hsd_spending,
-    find_beta_for_alpha,
-)
+from gsd.basic_code.find_good_hsd_spending_functions import find_best_hsd_spending
 from gsd.basic_code.gsd_statistics_calculator import (
     GSDStatistics,
     get_statistics_given_thresholds,
@@ -22,53 +18,119 @@ from gsd.basic_code.gsd_threshold_finder_algorithm_1 import (
     get_efficacy_futility_thresholds,
 )
 from gsd.basic_code.utils.bayesian_approximation import generate_bayesian_samples
+from gsd.basic_code.utils.find_fixed_sample_size import (
+    find_fixed_sample_size_for_bayesian_endpoint,
+)
 from gsd.basic_code.utils.spending_function import (
     generate_spending_from_spending_parameter,
 )
+
+N_TRIALS_FOR_VERIFY = 10_000_000
+
+
+@dataclass
+class InputParameters:
+    arm_parameters_h0: np.ndarray
+    arm_parameters_h1: np.ndarray
+    alpha: float
+    power: float
+    look_fractions: np.ndarray
+    sample_size_multiplier: float
+    is_binding: bool
+
+    def __post_init__(self):
+        self.n_looks = len(self.look_fractions)
+        self.n_arms = len(self.arm_parameters_h0) + 1
+        self.fixed_size_per_arm = find_fixed_sample_size_for_bayesian_endpoint(
+            alpha=self.alpha,
+            power=self.power,
+            rate_per_arm_h0=self.arm_parameters_h0,
+            rate_per_arm_h1=self.arm_parameters_h1,
+            seed=42,
+            verbose=False,
+        )
+        self.fixed_sample_size = self.fixed_size_per_arm * self.n_arms
+        self.n_samples = (
+            int(self.fixed_sample_size * self.sample_size_multiplier)
+            // self.n_arms
+            * self.n_arms
+        )
+        self.n_samples_per_look_total = (
+            (self.n_samples * self.look_fractions).astype(int)
+            // self.n_arms
+            * self.n_arms
+        )
+        self.n_samples_per_arm_per_look = self.n_samples_per_look_total // self.n_arms
+        self.look_fractions = (
+            self.n_samples_per_arm_per_look / self.n_samples_per_arm_per_look[-1]
+        )
+
+
+class AlgorithmName(Enum):
+    FIND_BEST_GENERAL_SPENDING = "find_best_general_spending"
+    FIND_BEST_HSD_SPENDING = "find_best_hsd_spending"
+    FIND_CONSTANT_THRESHOLDS = "find_constant_thresholds_binding"
+    FIND_BEST_THRESHOLDS = "find_best_thresholds"
+
+
+@dataclass
+class OptimizationParameters:
+    algorithm: AlgorithmName
+    seed: int
+    n_trials: int
+
+
+@dataclass
+class OptimizationResult:
+    alpha_spending_parameter: Optional[float]
+    beta_spending_parameter: Optional[float]
+    nfev: Optional[int]
+    futility_thresholds: np.ndarray
+    efficacy_thresholds: np.ndarray
+    ess_null: float
+    ess_alt: float
+    cost: float
+    type_I_error: float
+    power: float
+    time: float  # Time taken for the optimization run
+
 
 ###################################################################################################
 # Generate samples
 ###################################################################################################
 
 
-def generate_samples(reload_samples=False):
-    start = time.time()
-    file_name = f"samples_h0_{n_trials}.pkl"
-    if os.path.exists(file_name) and reload_samples:
-        with open(file_name, "rb") as file:
-            samples_h0 = pickle.load(file)
-    else:
-        samples_h0 = generate_bayesian_samples(
-            n_samples_per_look_per_arm=n_samples_per_arm_per_look,
-            rate_per_arm=arm_parameters_h0,
-            n_trials=n_trials,
-            rng=rng,
-        )
-        with open(file_name, "wb") as file:
-            pickle.dump(samples_h0, file)
-
-    file_name_h1 = f"samples_h1_{n_trials}.pkl"
-    if os.path.exists(file_name_h1) and reload_samples:
-        with open(file_name_h1, "rb") as file:
-            samples_h1 = pickle.load(file)
-    else:
-        samples_h1 = generate_bayesian_samples(
-            n_samples_per_look_per_arm=n_samples_per_arm_per_look,
-            rate_per_arm=arm_parameters_h1,
-            n_trials=n_trials,
-            rng=rng,
-        )
-        with open(file_name_h1, "wb") as file:
-            pickle.dump(samples_h1, file)
-    print(f"Time to generate samples = {time.time()-start:.2f} seconds")
+def generate_samples(
+    input_parameters: InputParameters,
+    optimization_parameters: OptimizationParameters,
+):
+    rng = np.random.default_rng(optimization_parameters.seed)
+    samples_h0 = generate_bayesian_samples(
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+        rate_per_arm=input_parameters.arm_parameters_h0,
+        n_trials=optimization_parameters.n_trials,
+        rng=rng,
+    )
+    samples_h1 = generate_bayesian_samples(
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+        rate_per_arm=input_parameters.arm_parameters_h1,
+        n_trials=optimization_parameters.n_trials,
+        rng=rng,
+    )
     return samples_h0, samples_h1
 
 
 #####################################################################################################
 # Find the best spending function of HSD-form, and generate the tables for the paper
 #####################################################################################################
-def find_best_hsd_alpha_beta_spending():
+def find_best_hsd_alpha_beta_spending(
+    input_parameters: InputParameters,
+    optimization_parameters: OptimizationParameters,
+    print_tables=False,
+    verbose=False,
+):
     start = time.time()
+    samples_h0, samples_h1 = generate_samples(input_parameters, optimization_parameters)
     (
         best_alpha_spending_parameter,
         best_beta_spending_parameter,
@@ -76,200 +138,237 @@ def find_best_hsd_alpha_beta_spending():
     ) = find_best_hsd_spending(
         samples_h0,
         samples_h1,
-        looks_fractions,
-        n_samples_per_arm_per_look,
-        alpha,
-        beta,
-        is_binding,
-        seed=1729,
+        input_parameters.look_fractions,
+        input_parameters.n_samples_per_arm_per_look,
+        input_parameters.alpha,
+        input_parameters.beta,
+        input_parameters.is_binding,
+        seed=optimization_parameters.seed,
         verbose=verbose,
     )
 
     best_alpha_spending = generate_spending_from_spending_parameter(
-        best_alpha_spending_parameter, alpha, looks_fractions
+        best_alpha_spending_parameter,
+        input_parameters.alpha,
+        input_parameters.look_fractions,
     )
     best_beta_spending = generate_spending_from_spending_parameter(
-        best_beta_spending_parameter, beta, looks_fractions
+        best_beta_spending_parameter,
+        input_parameters.beta,
+        input_parameters.look_fractions,
     )
+
+    samples_h0_verify = generate_bayesian_samples(
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+        rate_per_arm=input_parameters.arm_parameters_h0,
+        n_trials=N_TRIALS_FOR_VERIFY,
+        rng=np.random.default_rng(optimization_parameters.seed),
+    )
+    samples_h1_verify = generate_bayesian_samples(
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
+        rate_per_arm=input_parameters.arm_parameters_h1,
+        n_trials=N_TRIALS_FOR_VERIFY,
+        rng=np.random.default_rng(optimization_parameters.seed),
+    )
+
     best_efficacy_thresholds, best_futility_thresholds = (
         get_efficacy_futility_thresholds(
-            samples_h0,
-            samples_h1,
+            samples_h0_verify,
+            samples_h1_verify,
             best_alpha_spending,
             best_beta_spending,
-            is_binding=is_binding,
+            is_binding=optimization_parameters.is_binding,
         )
     )
     best_stats_h0 = get_statistics_given_thresholds(
-        samples_h0,
+        samples_h0_verify,
         efficacy_thresholds=best_efficacy_thresholds,
         futility_thresholds=best_futility_thresholds,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
     best_stats_h1 = get_statistics_given_thresholds(
-        samples_h1,
+        samples_h1_verify,
         efficacy_thresholds=best_efficacy_thresholds,
         futility_thresholds=best_futility_thresholds,
-        n_samples_per_look_per_arm=n_samples_per_arm_per_look,
+        n_samples_per_look_per_arm=input_parameters.n_samples_per_arm_per_look,
     )
-    print("========================================")
-    print("Best alpha and beta spending parameters:")
-    print("========================================")
-    print(f"Time to find hsd spending function = {time.time()-start:.2f} seconds")
-    print("number of function evaluations = ", differential_evolution_result.nfev)
-    print("best_alpha_spending_parameter = ", best_alpha_spending_parameter)
-    print("best_beta_spending_parameter = ", best_beta_spending_parameter)
-    print(f"best_alpha_spending_parameter = {best_alpha_spending_parameter}")
-    print(f"best_beta_spending_parameter = {best_beta_spending_parameter}")
-    print(f"best_alpha_spending = {best_alpha_spending}")
-    print(f"best_beta_spending = {best_beta_spending}")
-    print(f"best_efficacy_thresholds = {best_efficacy_thresholds}")
-    print(f"best_futility_thresholds = {best_futility_thresholds}")
-
-    print(
-        f"best_alpha_spending_parameter = {best_alpha_spending_parameter}. best_beta_spending_parameter = {best_beta_spending_parameter}"
-    )
-    print(
-        f"best_stats_h0.average_sample_size = {best_stats_h0.average_sample_size} (Relative to fixed: {best_stats_h0.average_sample_size/fixed_size})"
-    )
-    print(
-        f"best_stats_h1.average_sample_size = {best_stats_h1.average_sample_size} (Relative to fixed: {best_stats_h1.average_sample_size/fixed_size})"
+    best_cost = (
+        best_stats_h0.average_sample_size + best_stats_h1.average_sample_size
+    ) / 2
+    result = OptimizationResult(
+        alpha_spending_parameter=best_alpha_spending_parameter,
+        beta_spending_parameter=best_beta_spending_parameter,
+        cost=best_cost,
+        nfev=differential_evolution_result.nfev,
+        futility_thresholds=best_futility_thresholds,
+        efficacy_thresholds=best_efficacy_thresholds,
+        ess_null=best_stats_h0.average_sample_size,
+        ess_alt=best_stats_h1.average_sample_size,
+        type_I_error=best_stats_h0.disjunctive_power,
+        power=best_stats_h1.disjunctive_power,
+        time=time.time() - start,
     )
 
-    groups = ["0.5", "0.55", "0.6", "0.7", "H0", "H1"]
-    efficacy_stop_probs_arm05 = best_stats_h0.efficacy_probs_per_arm_per_look[0]
-    efficacy_stop_probs_arm055 = best_stats_h1.efficacy_probs_per_arm_per_look[2]
-    efficacy_stop_probs_arm06 = best_stats_h1.efficacy_probs_per_arm_per_look[1]
-    efficacy_stop_probs_arm07 = best_stats_h1.efficacy_probs_per_arm_per_look[0]
-    efficacy_stop_probs_h0 = best_stats_h0.efficacy_probs_trial_per_look
-    efficacy_stop_probs_h1 = best_stats_h1.efficacy_probs_trial_per_look
+    if print_tables:
+        print("========================================")
+        print("Best alpha and beta spending parameters:")
+        print("========================================")
+        print(f"Time to find hsd spending function = {time.time()-start:.2f} seconds")
+        print("number of function evaluations = ", differential_evolution_result.nfev)
+        print("best_alpha_spending_parameter = ", best_alpha_spending_parameter)
+        print("best_beta_spending_parameter = ", best_beta_spending_parameter)
+        print(f"best_alpha_spending_parameter = {best_alpha_spending_parameter}")
+        print(f"best_beta_spending_parameter = {best_beta_spending_parameter}")
+        print(f"best_alpha_spending = {best_alpha_spending}")
+        print(f"best_beta_spending = {best_beta_spending}")
+        print(f"best_efficacy_thresholds = {best_efficacy_thresholds}")
+        print(f"best_futility_thresholds = {best_futility_thresholds}")
 
-    # Combine all efficacy stop probabilities into a list of lists
-    efficacy_stop_probs = [
-        efficacy_stop_probs_arm05,
-        efficacy_stop_probs_arm055,
-        efficacy_stop_probs_arm06,
-        efficacy_stop_probs_arm07,
-        efficacy_stop_probs_h0,
-        efficacy_stop_probs_h1,
-    ]
-
-    # Number of groups and number of bars per group
-    n_groups = len(groups)
-    n_bars = len(efficacy_stop_probs[0])  # Assuming each list has the same length
-
-    # Define a list of colors for the bars
-    blue = "#009CCC"
-    gold = "#EBD10A"
-    purple = "#362C9A"
-    green = "#799527"
-    colors = [blue, gold, purple, green, "c", "m", "y", "k"]
-
-    # Create a figure and a set of subplots
-    fig, ax = plt.subplots(dpi=800)
-    plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
-
-    # Define the bar width and the index for the groups
-    bar_width = 0.15
-    index = np.arange(n_groups).astype(float)
-
-    extra_diff = 0.5
-    split_index = 4  # Index where the split should occur
-    index[split_index:] += extra_diff
-    # Plot the bars for each group
-    for i in range(n_bars):
-        ax.bar(
-            index + i * bar_width,
-            [efficacy_stop_probs[j][i] for j in range(n_groups)],
-            bar_width,
-            label=f"Interim {i+1}" if i != n_bars - 1 else "Final Analysis",
-            color=colors[i],
-            alpha=1,
+        print(
+            f"best_alpha_spending_parameter = {best_alpha_spending_parameter}. best_beta_spending_parameter = {best_beta_spending_parameter}"
+        )
+        print(
+            f"best_stats_h0.average_sample_size = {best_stats_h0.average_sample_size} (Relative to fixed: {best_stats_h0.average_sample_size/input_parameters.fixed_size})"
+        )
+        print(
+            f"best_stats_h1.average_sample_size = {best_stats_h1.average_sample_size} (Relative to fixed: {best_stats_h1.average_sample_size/input_parameters.fixed_size})"
         )
 
-    # Add a vertical line to split the graph into two parts
+        groups = ["0.5", "0.55", "0.6", "0.7", "H0", "H1"]
+        efficacy_stop_probs_arm05 = best_stats_h0.efficacy_probs_per_arm_per_look[0]
+        efficacy_stop_probs_arm055 = best_stats_h1.efficacy_probs_per_arm_per_look[2]
+        efficacy_stop_probs_arm06 = best_stats_h1.efficacy_probs_per_arm_per_look[1]
+        efficacy_stop_probs_arm07 = best_stats_h1.efficacy_probs_per_arm_per_look[0]
+        efficacy_stop_probs_h0 = best_stats_h0.efficacy_probs_trial_per_look
+        efficacy_stop_probs_h1 = best_stats_h1.efficacy_probs_trial_per_look
 
-    diff_size = 1 + extra_diff
-    ax.axvline(
-        x=index[split_index] + bar_width * (n_bars - 1) / 2 - diff_size / 2,
-        color="black",
-        linewidth=2,
-    )
+        # Combine all efficacy stop probabilities into a list of lists
+        efficacy_stop_probs = [
+            efficacy_stop_probs_arm05,
+            efficacy_stop_probs_arm055,
+            efficacy_stop_probs_arm06,
+            efficacy_stop_probs_arm07,
+            efficacy_stop_probs_h0,
+            efficacy_stop_probs_h1,
+        ]
 
-    # Add labels, title, and legend
-    ax.set_xlabel("Rate / Scenario")
-    ax.set_ylabel("Efficacy Stopping Probabilities")
-    ax.set_title("Efficacy Stopping Probabilities")
-    ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
-    ax.set_xticklabels(groups)
-    ax.legend(framealpha=1)
+        # Number of groups and number of bars per group
+        n_groups = len(groups)
+        n_bars = len(efficacy_stop_probs[0])  # Assuming each list has the same length
 
-    # Display the plot
-    plt.savefig("efficacy_stop.eps", format="eps")
+        # Define a list of colors for the bars
+        blue = "#009CCC"
+        gold = "#EBD10A"
+        purple = "#362C9A"
+        green = "#799527"
+        colors = [blue, gold, purple, green, "c", "m", "y", "k"]
 
-    futility_stop_probs_arm05 = best_stats_h0.futility_probs_per_arm_per_look[0]
-    futility_stop_probs_arm055 = best_stats_h1.futility_probs_per_arm_per_look[2]
-    futility_stop_probs_arm06 = best_stats_h1.futility_probs_per_arm_per_look[1]
-    futility_stop_probs_arm07 = best_stats_h1.futility_probs_per_arm_per_look[0]
-    futility_stop_probs_h0 = best_stats_h0.futility_probs_trial_per_look
-    futility_stop_probs_h1 = best_stats_h1.futility_probs_trial_per_look
+        # Create a figure and a set of subplots
+        fig, ax = plt.subplots(dpi=800)
+        plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
 
-    # Combine all futility stop probabilities into a list of lists
-    futility_stop_probs = [
-        futility_stop_probs_arm05,
-        futility_stop_probs_arm055,
-        futility_stop_probs_arm06,
-        futility_stop_probs_arm07,
-        futility_stop_probs_h0,
-        futility_stop_probs_h1,
-    ]
+        # Define the bar width and the index for the groups
+        bar_width = 0.15
+        index = np.arange(n_groups).astype(float)
 
-    # Number of groups and number of bars per group
-    n_groups = len(groups)
-    n_bars = len(futility_stop_probs[0])  # Assuming each list has the same length
+        extra_diff = 0.5
+        split_index = 4  # Index where the split should occur
+        index[split_index:] += extra_diff
+        # Plot the bars for each group
+        for i in range(n_bars):
+            ax.bar(
+                index + i * bar_width,
+                [efficacy_stop_probs[j][i] for j in range(n_groups)],
+                bar_width,
+                label=f"Interim {i+1}" if i != n_bars - 1 else "Final Analysis",
+                color=colors[i],
+                alpha=1,
+            )
 
-    # Create a figure and a set of subplots
-    fig, ax = plt.subplots(dpi=800)
-    plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
+        # Add a vertical line to split the graph into two parts
 
-    # Define the bar width and the index for the groups
-    bar_width = 0.15
-    index = np.arange(n_groups).astype(float)
-
-    extra_diff = 0.5
-    split_index = 4  # Index where the split should occur
-    index[split_index:] += extra_diff
-
-    # Plot each set of bars with specified colors
-    for i in range(n_bars):
-        bar_values = [futility_stop_probs[j][i] for j in range(n_groups)]
-        label_name = f"Interim{i+1}" if i < n_bars - 1 else "Final Analysis"
-        ax.bar(
-            index + i * bar_width,
-            bar_values,
-            bar_width,
-            label=label_name,
-            color=colors[i % len(colors)],
-            alpha=1,
+        diff_size = 1 + extra_diff
+        ax.axvline(
+            x=index[split_index] + bar_width * (n_bars - 1) / 2 - diff_size / 2,
+            color="black",
+            linewidth=2,
         )
 
-    diff_size = 1 + extra_diff
-    ax.axvline(
-        x=index[split_index] + bar_width * (n_bars - 1) / 2 - diff_size / 2,
-        color="black",
-        linewidth=2,
-    )
+        # Add labels, title, and legend
+        ax.set_xlabel("Rate / Scenario")
+        ax.set_ylabel("Efficacy Stopping Probabilities")
+        ax.set_title("Efficacy Stopping Probabilities")
+        ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
+        ax.set_xticklabels(groups)
+        ax.legend(framealpha=1)
 
-    # Add labels, title, and legend
-    ax.set_xlabel("Rate / Scenario")
-    ax.set_ylabel("Futility Stopping Probabilities")
-    ax.set_title("Futility Stopping Probabilities")
-    ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
-    ax.set_xticklabels(groups)
-    ax.legend(framealpha=1)
+        # Display the plot
+        plt.savefig("efficacy_stop.eps", format="eps")
 
-    # Display the plot
-    plt.savefig("futility_stop.eps", format="eps")
+        futility_stop_probs_arm05 = best_stats_h0.futility_probs_per_arm_per_look[0]
+        futility_stop_probs_arm055 = best_stats_h1.futility_probs_per_arm_per_look[2]
+        futility_stop_probs_arm06 = best_stats_h1.futility_probs_per_arm_per_look[1]
+        futility_stop_probs_arm07 = best_stats_h1.futility_probs_per_arm_per_look[0]
+        futility_stop_probs_h0 = best_stats_h0.futility_probs_trial_per_look
+        futility_stop_probs_h1 = best_stats_h1.futility_probs_trial_per_look
+
+        # Combine all futility stop probabilities into a list of lists
+        futility_stop_probs = [
+            futility_stop_probs_arm05,
+            futility_stop_probs_arm055,
+            futility_stop_probs_arm06,
+            futility_stop_probs_arm07,
+            futility_stop_probs_h0,
+            futility_stop_probs_h1,
+        ]
+
+        # Number of groups and number of bars per group
+        n_groups = len(groups)
+        n_bars = len(futility_stop_probs[0])  # Assuming each list has the same length
+
+        # Create a figure and a set of subplots
+        fig, ax = plt.subplots(dpi=800)
+        plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
+
+        # Define the bar width and the index for the groups
+        bar_width = 0.15
+        index = np.arange(n_groups).astype(float)
+
+        extra_diff = 0.5
+        split_index = 4  # Index where the split should occur
+        index[split_index:] += extra_diff
+
+        # Plot each set of bars with specified colors
+        for i in range(n_bars):
+            bar_values = [futility_stop_probs[j][i] for j in range(n_groups)]
+            label_name = f"Interim{i+1}" if i < n_bars - 1 else "Final Analysis"
+            ax.bar(
+                index + i * bar_width,
+                bar_values,
+                bar_width,
+                label=label_name,
+                color=colors[i % len(colors)],
+                alpha=1,
+            )
+
+        diff_size = 1 + extra_diff
+        ax.axvline(
+            x=index[split_index] + bar_width * (n_bars - 1) / 2 - diff_size / 2,
+            color="black",
+            linewidth=2,
+        )
+
+        # Add labels, title, and legend
+        ax.set_xlabel("Rate / Scenario")
+        ax.set_ylabel("Futility Stopping Probabilities")
+        ax.set_title("Futility Stopping Probabilities")
+        ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
+        ax.set_xticklabels(groups)
+        ax.legend(framealpha=1)
+
+        # Display the plot
+        plt.savefig("futility_stop.eps", format="eps")
+    return result
 
 
 ################################################################################################
@@ -283,7 +382,10 @@ class ParametersStatistics:
     stats_h1: GSDStatistics
 
 
-def print_alpha_beta_graphs():
+def print_alpha_beta_graphs(
+    input_parameters: InputParameters, n_trials: int = 100_000, seed: int = 42
+):
+    
 
     alpha_parameter_space = np.concatenate(
         (
@@ -709,54 +811,72 @@ def find_best_thresholds(samples_h0, samples_h1):
     print(f"average_sample_size_h1 = {stats_h1.average_sample_size}")
 
 
-alpha = 0.025
-beta = 0.2
-power = 1 - beta
+def analyze_scenario(
+    arm_parameters_h0: np.ndarray,
+    arm_parameters_h1: np.ndarray,
+    alpha: float,
+    power: float,
+    look_fractions: np.ndarray,
+    n_trials: int,
+    seed: int = 1729,
+    verbose: bool = False,
+    print_tables: bool = False,
+):
+    n_arms = len(arm_parameters_h1)
+    assert len(arm_parameters_h0) == n_arms
+    n_looks = len(look_fractions)
 
-p0 = 0.5
-p3 = 0.55
-p2 = 0.6
-p1 = 0.7
-
-arm_parameters_h1 = np.array([[p0], [p1], [p2], [p3]])
-arm_parameters_h0 = np.array([[p0], [p0], [p0], [p0]])
-n_arms = len(arm_parameters_h1)
-
-rng = np.random.default_rng(seed=1729)
-
-fixed_size = 468
-n_trials = 1000000  # should be 1000000, but can use smaller number for testing
-sample_size_multiplier = 1.15
-
-is_binding = False
-n_samples = int(fixed_size * sample_size_multiplier) // n_arms * n_arms
-
-
-looks_fractions = np.array([0.3, 0.5, 0.7, 1])
-
-n_samples_per_look_total = (n_samples * looks_fractions).astype(int) // n_arms * n_arms
-n_samples_per_arm_per_look = n_samples_per_look_total // n_arms
-max_n = int(np.max(n_samples_per_arm_per_look))
-
-print(f"arm parameters = {arm_parameters_h1}")
-print(f"fixed_size = {fixed_size}")
-print(f"fixed_size per arm = {fixed_size // n_arms}")
-print(f"sample size multiplier = {sample_size_multiplier}")
-print(f"look_fractions = {looks_fractions}")
-print(f"n_samples_per_look_total = {n_samples_per_look_total}")
-print(f"n_samples_per_look_per_arm = {n_samples_per_look_total // n_arms}")
-print(f"Is binding = {is_binding}")
-
-verbose = False
-
-samples_h0, samples_h1 = generate_samples()
+    fixed_size_per_arm = find_fixed_sample_size_for_bayesian_endpoint(
+        alpha=alpha,
+        power=power,
+        rate_per_arm_h0=arm_parameters_h0,
+        rate_per_arm_h1=arm_parameters_h1,
+        seed=seed,
+        verbose=verbose,
+    )
+    fixed_sample_size = fixed_size_per_arm * n_arms
+    n_samples = int(fixed_sample_size * sample_size_multiplier) // n_arms * n_arms
+    n_samples_per_look_total = (
+        (n_samples * look_fractions).astype(int) // n_arms * n_arms
+    )
+    n_samples_per_arm_per_look = n_samples_per_look_total // n_arms
+    print(f"arm parameters = {arm_parameters_h1}")
+    print(f"fixed_size = {fixed_size}")
+    print(f"fixed_size per arm = {fixed_size // n_arms}")
+    print(f"sample size multiplier = {sample_size_multiplier}")
+    print(f"look_fractions = {looks_fractions}")
+    print(f"n_samples_per_look_total = {n_samples_per_look_total}")
+    print(f"n_samples_per_look_per_arm = {n_samples_per_look_total // n_arms}")
+    print(f"Is binding = {is_binding}")
+    samples_h0, samples_h1 = generate_samples()
+    find_best_hsd_alpha_beta_spending()
+    print_alpha_beta_graphs()
+    find_constant_thresholds_binding()
+    find_best_general_spending_function()
+    find_best_thresholds(samples_h0, samples_h1)
 
 
-find_best_hsd_alpha_beta_spending()
-print_alpha_beta_graphs()
-find_constant_thresholds_binding()
-find_best_general_spending_function()
-find_best_thresholds(samples_h0, samples_h1)
+# alpha = 0.025
+# beta = 0.2
+# power = 1 - beta
+
+# p0 = 0.5
+# p3 = 0.55
+# p2 = 0.6
+# p1 = 0.7
+
+# rate_per_arm_h1 = np.array([p0, p1, p2, p3])
+# rate_per_arm_h0 = np.array([p0, p0, p0, p0])
+
+# seed = 1729
+
+# n_trials = 1_000_000  # should be 1000000, but can use smaller number for testing
+# sample_size_multiplier = 1.15
+
+# is_binding = False
+
+# looks_fractions = np.array([0.3, 0.5, 0.7, 1])
+# verbose = False
 
 # Non-Binding Output:
 # arm parameters = [[0.5 ]

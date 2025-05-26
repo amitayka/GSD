@@ -19,9 +19,11 @@ def find_best_hsd_spending(
     alpha: float,
     beta: float,
     is_binding: bool,
+    null_weight: float = 0.5,
+    alt_weight: float = 0.5,
     seed: int = 1729,
     verbose=False,
-) -> tuple[float, float, float, float]:
+):
     """
     Find the best Hwang-Shih-Decani spending strategy based on given parameters.
     The function uses 2D differential evolution to optimize the spending strategy.
@@ -32,6 +34,8 @@ def find_best_hsd_spending(
     alpha: float, the total spending value for the null hypothesis.
     beta: float, the total spending value for the alternative hypothesis.
     is_binding: bool, whether the spending strategy is binding or not.
+    null_weight: float, weight for the null hypothesis in the objective function.
+    alt_weight: float, weight for the alternative hypothesis in the objective function.
     seed: int, random seed for reproducibility.
     verbose: bool, whether to print the optimization process.
     Returns: tuple of (alpha_spending_parameter, beta_spending_parameter, result), where result is the
@@ -85,7 +89,10 @@ def find_best_hsd_spending(
             n_samples_per_look_per_arm=n_samples_per_arm_per_look,
         )
         # We optimize total average sample size, under h0 and h1.
-        trial_cost = stats_h0.average_sample_size + stats_h1.average_sample_size
+        trial_cost = (
+            null_weight * stats_h0.average_sample_size
+            + alt_weight * stats_h1.average_sample_size
+        )
         # Change here for a different objective function.
         if verbose:
             print(
@@ -175,9 +182,11 @@ def find_best_hsd_spending_alternative(
     alpha: float,
     beta: float,
     is_binding: bool,
+    null_weight: float = 0.5,
+    alt_weight: float = 0.5,
     seed: int = 1729,
     verbose=False,
-) -> tuple[float, float, float, float]:
+):
     """
     Find the best Hwang-Shih-Decani spending strategy based on given parameters.
     the function uses 1D differential evolution to optimize the spending strategy over the alpha spending parameter,
@@ -240,7 +249,10 @@ def find_best_hsd_spending_alternative(
             n_samples_per_look_per_arm=n_samples_per_arm_per_look,
         )
         # We optimize total average sample size, under h0 and h1.
-        trial_cost = stats_h0.average_sample_size + stats_h1.average_sample_size
+        trial_cost = (
+            null_weight * stats_h0.average_sample_size
+            + alt_weight * stats_h1.average_sample_size
+        )
         # Change here for a different objective function.
         if verbose:
             print(
