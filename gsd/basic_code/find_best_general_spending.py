@@ -56,7 +56,7 @@ def find_best_general_spending(
     alt_weight: float = 0.5,
     seed: int = 1729,
     verbose=False,
-):                            # UDI: add return value type hint
+):                            # UDI: add return values type hint
     """
     Find the best general spending strategy based on given parameters.
     The function uses differential evolution to optimize the spending strategy.
@@ -71,7 +71,7 @@ def find_best_general_spending(
     alt_weight: float, the weight for the alternative hypothesis.
     seed: int, the random seed for reproducibility.
     verbose: bool, whether to print the evaluations and outputs.
-    Returns: a tuple of the best spending strategies for alpha and beta, and the result of the differential evolution.
+    Returns: a tuple of the best spending strategies for alpha and beta, and the result of the differential evolution.    # UDI: specify shapes where relevant
     """
     global function_evaluations
     function_evaluations = 0
@@ -101,7 +101,7 @@ def find_best_general_spending(
                 print(
                     f"evaluations= {function_evaluations}, input = {input}, output = {10000*( 2 - power)}"
                 )
-            return 10000 * (2 - power)                # UDI: why?? how plays with cost? should use 
+            return 10000 * (2 - power)                # UDI: why?? how does this play with cost? does 10000 stand for "much more than maximal sample size?  
         stats_h0 = get_statistics_given_thresholds(
             samples_h0,
             efficacy_thresholds,
