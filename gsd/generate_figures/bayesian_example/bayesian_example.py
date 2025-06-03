@@ -1,4 +1,5 @@
 # gsd code for article - bayesian multi arm
+import os
 import pickle
 import time
 from dataclasses import dataclass
@@ -10,37 +11,37 @@ import numpy as np
 import scipy as sp
 from scipy.optimize import differential_evolution
 
-from gsd.basic_code.find_best_general_spending import \
-    find_best_general_spending
+from gsd.basic_code.find_best_general_spending import find_best_general_spending
 from gsd.basic_code.find_good_hsd_spending_functions import (
-    find_best_hsd_spending, find_beta_for_alpha)
+    find_best_hsd_spending,
+    find_beta_for_alpha,
+)
 from gsd.basic_code.gsd_statistics_calculator import (
-    GSDStatistics, get_statistics_given_thresholds)
-from gsd.basic_code.gsd_threshold_finder_algorithm_1 import \
-    get_efficacy_futility_thresholds
-from gsd.basic_code.utils.bayesian_approximation import \
-    generate_bayesian_samples
-from gsd.basic_code.utils.find_fixed_sample_size import \
-    find_fixed_sample_size_for_bayesian_endpoint
-from gsd.basic_code.utils.spending_function import \
-    generate_spending_from_spending_parameter
+    GSDStatistics,
+    get_statistics_given_thresholds,
+)
+from gsd.basic_code.gsd_threshold_finder_algorithm_1 import (
+    get_efficacy_futility_thresholds,
+)
+from gsd.basic_code.utils.bayesian_approximation import generate_bayesian_samples
+from gsd.basic_code.utils.find_fixed_sample_size import (
+    find_fixed_sample_size_for_bayesian_endpoint,
+)
+from gsd.basic_code.utils.spending_function import (
+    generate_spending_from_spending_parameter,
+)
 
 N_TRIALS_FOR_VERIFY = 10_000_000  # change to 10_000_000 for final version
 
-N_TRIALS1 = 10_000
-REPEATS1 = 1
-# N_TRIALS2 = 200_000
-# REPEATS2 = 1
-N_TRIALS_BEST_THRESHOLDS = 10_000
-REPEATS_BEST_THRESHOLDS = 1
-
-N_SCENARIOS_PER_OPTION = 1
-
 # N_TRIALS1 = 10_000
 # REPEATS1 = 1
-# N_TRIALS2 = 10_000
-# REPEATS2 = 1
+# N_TRIALS_BEST_THRESHOLDS = 5_000
+N_TRIALS1 = 200_000
+REPEATS1 = 1
+N_TRIALS_BEST_THRESHOLDS = 50_000
+REPEATS_BEST_THRESHOLDS = 1
 
+N_SCENARIOS_PER_OPTION = 5
 
 
 @dataclass
@@ -85,8 +86,8 @@ class InputParameters:
 
 class AlgorithmName(Enum):
     FIND_BEST_GENERAL_SPENDING = "find_best_general_spending"
-    FIND_BEST_HSD_SPENDING = "find_best_hsd_spending"
-    FIND_CONSTANT_THRESHOLDS = "find_constant_thresholds_binding"
+    FIND_BEST_HSD_SPENDING = "hsd"
+    FIND_CONSTANT_THRESHOLDS = "constant_thresholds_binding"
     FIND_BEST_THRESHOLDS = "find_best_thresholds"
 
 
@@ -211,8 +212,8 @@ def find_best_hsd_alpha_beta_spending(
 
     best_efficacy_thresholds, best_futility_thresholds = (
         get_efficacy_futility_thresholds(
-            samples_h0_verify,
-            samples_h1_verify,
+            samples_h0,
+            samples_h1,
             best_alpha_spending,
             best_beta_spending,
             is_binding=input_parameters.is_binding,
@@ -253,166 +254,167 @@ def find_best_hsd_alpha_beta_spending(
         power=best_stats_h1.disjunctive_power,
         time=time.time() - start,
     )
+    if not print_output:
+        return result
 
-    if print_output:
-        print("========================================")
-        print("Best alpha and beta spending parameters:")
-        print("========================================")
-        print(f"Time to find hsd spending function = {time.time()-start:.2f} seconds")
-        print("number of function evaluations = ", differential_evolution_result.nfev)
-        print("best_alpha_spending_parameter = ", best_alpha_spending_parameter)
-        print("best_beta_spending_parameter = ", best_beta_spending_parameter)
-        print(f"best_alpha_spending_parameter = {best_alpha_spending_parameter}")
-        print(f"best_beta_spending_parameter = {best_beta_spending_parameter}")
-        print(f"best_alpha_spending = {best_alpha_spending}")
-        print(f"best_beta_spending = {best_beta_spending}")
-        print(f"best_efficacy_thresholds = {best_efficacy_thresholds}")
-        print(f"best_futility_thresholds = {best_futility_thresholds}")
+    print("========================================")
+    print("Best alpha and beta spending parameters:")
+    print("========================================")
+    print(f"Time to find hsd spending function = {time.time()-start:.2f} seconds")
+    print("number of function evaluations = ", differential_evolution_result.nfev)
+    print("best_alpha_spending_parameter = ", best_alpha_spending_parameter)
+    print("best_beta_spending_parameter = ", best_beta_spending_parameter)
+    print(f"best_alpha_spending_parameter = {best_alpha_spending_parameter}")
+    print(f"best_beta_spending_parameter = {best_beta_spending_parameter}")
+    print(f"best_alpha_spending = {best_alpha_spending}")
+    print(f"best_beta_spending = {best_beta_spending}")
+    print(f"best_efficacy_thresholds = {best_efficacy_thresholds}")
+    print(f"best_futility_thresholds = {best_futility_thresholds}")
 
-        print(
-            f"best_alpha_spending_parameter = {best_alpha_spending_parameter}. best_beta_spending_parameter = {best_beta_spending_parameter}"
-        )
-        print(
-            f"best_stats_h0.average_sample_size = {best_stats_h0.average_sample_size} (Relative to fixed: {best_stats_h0.average_sample_size/input_parameters.fixed_size})"
-        )
-        print(
-            f"best_stats_h1.average_sample_size = {best_stats_h1.average_sample_size} (Relative to fixed: {best_stats_h1.average_sample_size/input_parameters.fixed_size})"
-        )
+    print(
+        f"best_alpha_spending_parameter = {best_alpha_spending_parameter}. best_beta_spending_parameter = {best_beta_spending_parameter}"
+    )
+    print(
+        f"best_stats_h0.average_sample_size = {best_stats_h0.average_sample_size} (Relative to fixed: {best_stats_h0.average_sample_size/input_parameters.fixed_size})"
+    )
+    print(
+        f"best_stats_h1.average_sample_size = {best_stats_h1.average_sample_size} (Relative to fixed: {best_stats_h1.average_sample_size/input_parameters.fixed_size})"
+    )
 
-        groups = ["0.5", "0.55", "0.6", "0.7", "H0", "H1"]
-        efficacy_stop_probs_arm05 = best_stats_h0.efficacy_probs_per_arm_per_look[0]
-        efficacy_stop_probs_arm055 = best_stats_h1.efficacy_probs_per_arm_per_look[2]
-        efficacy_stop_probs_arm06 = best_stats_h1.efficacy_probs_per_arm_per_look[1]
-        efficacy_stop_probs_arm07 = best_stats_h1.efficacy_probs_per_arm_per_look[0]
-        efficacy_stop_probs_h0 = best_stats_h0.efficacy_probs_trial_per_look
-        efficacy_stop_probs_h1 = best_stats_h1.efficacy_probs_trial_per_look
+    groups = ["0.5", "0.55", "0.6", "0.7", "H0", "H1"]
+    efficacy_stop_probs_arm05 = best_stats_h0.efficacy_probs_per_arm_per_look[0]
+    efficacy_stop_probs_arm055 = best_stats_h1.efficacy_probs_per_arm_per_look[2]
+    efficacy_stop_probs_arm06 = best_stats_h1.efficacy_probs_per_arm_per_look[1]
+    efficacy_stop_probs_arm07 = best_stats_h1.efficacy_probs_per_arm_per_look[0]
+    efficacy_stop_probs_h0 = best_stats_h0.efficacy_probs_trial_per_look
+    efficacy_stop_probs_h1 = best_stats_h1.efficacy_probs_trial_per_look
 
-        # Combine all efficacy stop probabilities into a list of lists
-        efficacy_stop_probs = [
-            efficacy_stop_probs_arm05,
-            efficacy_stop_probs_arm055,
-            efficacy_stop_probs_arm06,
-            efficacy_stop_probs_arm07,
-            efficacy_stop_probs_h0,
-            efficacy_stop_probs_h1,
-        ]
+    # Combine all efficacy stop probabilities into a list of lists
+    efficacy_stop_probs = [
+        efficacy_stop_probs_arm05,
+        efficacy_stop_probs_arm055,
+        efficacy_stop_probs_arm06,
+        efficacy_stop_probs_arm07,
+        efficacy_stop_probs_h0,
+        efficacy_stop_probs_h1,
+    ]
 
-        # Number of groups and number of bars per group
-        n_groups = len(groups)
-        n_bars = len(efficacy_stop_probs[0])  # Assuming each list has the same length
+    # Number of groups and number of bars per group
+    n_groups = len(groups)
+    n_bars = len(efficacy_stop_probs[0])  # Assuming each list has the same length
 
-        # Define a list of colors for the bars
-        blue = "#009CCC"
-        gold = "#EBD10A"
-        purple = "#362C9A"
-        green = "#799527"
-        colors = [blue, gold, purple, green, "c", "m", "y", "k"]
+    # Define a list of colors for the bars
+    blue = "#009CCC"
+    gold = "#EBD10A"
+    purple = "#362C9A"
+    green = "#799527"
+    colors = [blue, gold, purple, green, "c", "m", "y", "k"]
 
-        # Create a figure and a set of subplots
-        fig, ax = plt.subplots(dpi=800)
-        plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
+    # Create a figure and a set of subplots
+    fig, ax = plt.subplots(dpi=800)
+    plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
 
-        # Define the bar width and the index for the groups
-        bar_width = 0.15
-        index = np.arange(n_groups).astype(float)
+    # Define the bar width and the index for the groups
+    bar_width = 0.15
+    index = np.arange(n_groups).astype(float)
 
-        extra_diff = 0.5
-        split_index = 4  # Index where the split should occur
-        index[split_index:] += extra_diff
-        # Plot the bars for each group
-        for i in range(n_bars):
-            ax.bar(
-                index + i * bar_width,
-                [efficacy_stop_probs[j][i] for j in range(n_groups)],
-                bar_width,
-                label=f"Interim {i+1}" if i != n_bars - 1 else "Final Analysis",
-                color=colors[i],
-                alpha=1,
-            )
-
-        # Add a vertical line to split the graph into two parts
-
-        diff_size = 1 + extra_diff
-        ax.axvline(
-            x=index[split_index] + bar_width * (n_bars - 1) / 2 - diff_size / 2,
-            color="black",
-            linewidth=2,
+    extra_diff = 0.5
+    split_index = 4  # Index where the split should occur
+    index[split_index:] += extra_diff
+    # Plot the bars for each group
+    for i in range(n_bars):
+        ax.bar(
+            index + i * bar_width,
+            [efficacy_stop_probs[j][i] for j in range(n_groups)],
+            bar_width,
+            label=f"Interim {i+1}" if i != n_bars - 1 else "Final Analysis",
+            color=colors[i],
+            alpha=1,
         )
 
-        # Add labels, title, and legend
-        ax.set_xlabel("Rate / Scenario")
-        ax.set_ylabel("Efficacy Stopping Probabilities")
-        ax.set_title("Efficacy Stopping Probabilities")
-        ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
-        ax.set_xticklabels(groups)
-        ax.legend(framealpha=1)
+    # Add a vertical line to split the graph into two parts
 
-        # Display the plot
-        plt.savefig("efficacy_stop.eps", format="eps")
+    diff_size = 1 + extra_diff
+    ax.axvline(
+        x=index[split_index] + bar_width * (n_bars - 1) / 2 - diff_size / 2,
+        color="black",
+        linewidth=2,
+    )
 
-        futility_stop_probs_arm05 = best_stats_h0.futility_probs_per_arm_per_look[0]
-        futility_stop_probs_arm055 = best_stats_h1.futility_probs_per_arm_per_look[2]
-        futility_stop_probs_arm06 = best_stats_h1.futility_probs_per_arm_per_look[1]
-        futility_stop_probs_arm07 = best_stats_h1.futility_probs_per_arm_per_look[0]
-        futility_stop_probs_h0 = best_stats_h0.futility_probs_trial_per_look
-        futility_stop_probs_h1 = best_stats_h1.futility_probs_trial_per_look
+    # Add labels, title, and legend
+    ax.set_xlabel("Rate / Scenario")
+    ax.set_ylabel("Efficacy Stopping Probabilities")
+    ax.set_title("Efficacy Stopping Probabilities")
+    ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
+    ax.set_xticklabels(groups)
+    ax.legend(framealpha=1)
 
-        # Combine all futility stop probabilities into a list of lists
-        futility_stop_probs = [
-            futility_stop_probs_arm05,
-            futility_stop_probs_arm055,
-            futility_stop_probs_arm06,
-            futility_stop_probs_arm07,
-            futility_stop_probs_h0,
-            futility_stop_probs_h1,
-        ]
+    # Display the plot
+    plt.savefig("efficacy_stop.eps", format="eps")
 
-        # Number of groups and number of bars per group
-        n_groups = len(groups)
-        n_bars = len(futility_stop_probs[0])  # Assuming each list has the same length
+    futility_stop_probs_arm05 = best_stats_h0.futility_probs_per_arm_per_look[0]
+    futility_stop_probs_arm055 = best_stats_h1.futility_probs_per_arm_per_look[2]
+    futility_stop_probs_arm06 = best_stats_h1.futility_probs_per_arm_per_look[1]
+    futility_stop_probs_arm07 = best_stats_h1.futility_probs_per_arm_per_look[0]
+    futility_stop_probs_h0 = best_stats_h0.futility_probs_trial_per_look
+    futility_stop_probs_h1 = best_stats_h1.futility_probs_trial_per_look
 
-        # Create a figure and a set of subplots
-        fig, ax = plt.subplots(dpi=800)
-        plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
+    # Combine all futility stop probabilities into a list of lists
+    futility_stop_probs = [
+        futility_stop_probs_arm05,
+        futility_stop_probs_arm055,
+        futility_stop_probs_arm06,
+        futility_stop_probs_arm07,
+        futility_stop_probs_h0,
+        futility_stop_probs_h1,
+    ]
 
-        # Define the bar width and the index for the groups
-        bar_width = 0.15
-        index = np.arange(n_groups).astype(float)
+    # Number of groups and number of bars per group
+    n_groups = len(groups)
+    n_bars = len(futility_stop_probs[0])  # Assuming each list has the same length
 
-        extra_diff = 0.5
-        split_index = 4  # Index where the split should occur
-        index[split_index:] += extra_diff
+    # Create a figure and a set of subplots
+    fig, ax = plt.subplots(dpi=800)
+    plt.grid(True, color="gray", linestyle="--", linewidth=0.5)
 
-        # Plot each set of bars with specified colors
-        for i in range(n_bars):
-            bar_values = [futility_stop_probs[j][i] for j in range(n_groups)]
-            label_name = f"Interim{i+1}" if i < n_bars - 1 else "Final Analysis"
-            ax.bar(
-                index + i * bar_width,
-                bar_values,
-                bar_width,
-                label=label_name,
-                color=colors[i % len(colors)],
-                alpha=1,
-            )
+    # Define the bar width and the index for the groups
+    bar_width = 0.15
+    index = np.arange(n_groups).astype(float)
 
-        diff_size = 1 + extra_diff
-        ax.axvline(
-            x=index[split_index] + bar_width * (n_bars - 1) / 2 - diff_size / 2,
-            color="black",
-            linewidth=2,
+    extra_diff = 0.5
+    split_index = 4  # Index where the split should occur
+    index[split_index:] += extra_diff
+
+    # Plot each set of bars with specified colors
+    for i in range(n_bars):
+        bar_values = [futility_stop_probs[j][i] for j in range(n_groups)]
+        label_name = f"Interim{i+1}" if i < n_bars - 1 else "Final Analysis"
+        ax.bar(
+            index + i * bar_width,
+            bar_values,
+            bar_width,
+            label=label_name,
+            color=colors[i % len(colors)],
+            alpha=1,
         )
 
-        # Add labels, title, and legend
-        ax.set_xlabel("Rate / Scenario")
-        ax.set_ylabel("Futility Stopping Probabilities")
-        ax.set_title("Futility Stopping Probabilities")
-        ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
-        ax.set_xticklabels(groups)
-        ax.legend(framealpha=1)
+    diff_size = 1 + extra_diff
+    ax.axvline(
+        x=index[split_index] + bar_width * (n_bars - 1) / 2 - diff_size / 2,
+        color="black",
+        linewidth=2,
+    )
 
-        # Display the plot
-        plt.savefig("futility_stop.eps", format="eps")
+    # Add labels, title, and legend
+    ax.set_xlabel("Rate / Scenario")
+    ax.set_ylabel("Futility Stopping Probabilities")
+    ax.set_title("Futility Stopping Probabilities")
+    ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
+    ax.set_xticklabels(groups)
+    ax.legend(framealpha=1)
+
+    # Display the plot
+    plt.savefig("futility_stop.eps", format="eps")
     return result
 
 
@@ -778,8 +780,8 @@ def find_best_general_spending_function(
         efficacy_thresholds_differential_evolution,
         futility_thresholds_differential_evolution,
     ) = get_efficacy_futility_thresholds(
-        samples_h0_verify,
-        samples_h1_verify,
+        samples_h0,
+        samples_h1,
         alpha_spending,
         beta_spending,
         is_binding=input_parameters.is_binding,
@@ -1021,7 +1023,7 @@ def generate_tables_for_input_parameters(input_parameters: InputParameters):
     )
 
 
-def generate_tables():
+def generate_tables_for_single_scenario():
     input_parameters = InputParameters(
         rate_per_arm_h0=np.array([0.5, 0.5, 0.5, 0.5]),
         rate_per_arm_h1=np.array([0.5, 0.7, 0.6, 0.55]),
@@ -1038,49 +1040,31 @@ def run_scenario(
     input_parameters: InputParameters,
     filename: Optional[str],
     verbose: bool = False,
-    base_seed = 1729,
+    base_seed=1729,
 ):
     optimization_parameters_list = (
         [
             OptimizationParameters(
-                algorithm="hsd",
+                algorithm=AlgorithmName.FIND_BEST_HSD_SPENDING,
                 name=f"0 find_best_hsd_spending_n_trials_{N_TRIALS1}",
                 seed=i + base_seed,
                 n_trials=N_TRIALS1,
             )
             for i in range(REPEATS1)
         ]
-        # + [
-        #     OptimizationParameters(
-        #         algorithm="hsd",
-        #         name=f"1 find_best_hsd_spending_n_trials_{N_TRIALS2}",
-        #         seed=i + base_seed,
-        #         n_trials=N_TRIALS2,
-        #     )
-        #     for i in range(REPEATS2)
-        # ]
         + [
             OptimizationParameters(
-                algorithm="find_best_general_spending",
+                algorithm=AlgorithmName.FIND_BEST_GENERAL_SPENDING,
                 name=f"1 find_best_general_spending_n_trials_{N_TRIALS1}",
                 seed=i + base_seed,
                 n_trials=N_TRIALS1,
             )
             for i in range(REPEATS1)
         ]
-        # + [
-        #     OptimizationParameters(
-        #         algorithm="find_best_general_spending",
-        #         name=f"find_best_general_spending_n_trials_{N_TRIALS2}",
-        #         seed=i,
-        #         n_trials=N_TRIALS2,
-        #     )
-        #     for i in range(REPEATS2)
-        # ]
         + [
             OptimizationParameters(
-                algorithm="2 find_best_thresholds",
-                name=f"find_best_thresholds_n_trials_{N_TRIALS_BEST_THRESHOLDS}",
+                algorithm=AlgorithmName.FIND_BEST_THRESHOLDS,
+                name=f"2 find_best_thresholds_n_trials_{N_TRIALS_BEST_THRESHOLDS}",
                 seed=i + base_seed,
                 n_trials=N_TRIALS_BEST_THRESHOLDS,
             )
@@ -1088,8 +1072,8 @@ def run_scenario(
         ]
         + [
             OptimizationParameters(
-                algorithm="3 constant_thresholds_binding",
-                name=f"find_best_thresholds_n_trials_{N_TRIALS1}",
+                algorithm=AlgorithmName.FIND_CONSTANT_THRESHOLDS,
+                name=f"3 constant_thresholds_binding_n_trials_{N_TRIALS1}",
                 seed=i + base_seed,
                 n_trials=N_TRIALS1,
             )
@@ -1098,28 +1082,33 @@ def run_scenario(
     )
     optimization_runs = []
     for optimization_parameters in optimization_parameters_list:
-        if optimization_parameters.algorithm == "hsd":
+        if optimization_parameters.algorithm == AlgorithmName.FIND_BEST_HSD_SPENDING:
             result = find_best_hsd_alpha_beta_spending(
                 input_parameters=input_parameters,
                 optimization_parameters=optimization_parameters,
                 verbose=verbose,
                 print_output=False,
             )
-        elif optimization_parameters.algorithm == "find_best_general_spending":
+        elif (
+            optimization_parameters.algorithm
+            == AlgorithmName.FIND_BEST_GENERAL_SPENDING
+        ):
             result = find_best_general_spending_function(
                 input_parameters=input_parameters,
                 optimization_parameters=optimization_parameters,
                 verbose=verbose,
                 print_output=False,
             )
-        elif optimization_parameters.algorithm == "find_best_thresholds":
+        elif optimization_parameters.algorithm == AlgorithmName.FIND_BEST_THRESHOLDS:
             result = find_best_thresholds(
                 input_parameters=input_parameters,
                 optimization_parameters=optimization_parameters,
                 verbose=verbose,
                 print_output=False,
             )
-        elif optimization_parameters.algorithm == "constant_thresholds_binding":
+        elif (
+            optimization_parameters.algorithm == AlgorithmName.FIND_CONSTANT_THRESHOLDS
+        ):
             result = find_constant_thresholds_binding(
                 input_parameters=input_parameters,
                 optimization_parameters=optimization_parameters,
@@ -1159,13 +1148,12 @@ def compare_multiple_scenarios():
     p1 = 0.7
     p4 = 0.8
 
-    sample_size_multiplier = 1.15
-
+    rng = np.random.default_rng(1729)
 
     input_parameters_list = []
-    for n_looks in range(3, 6):
+    for n_arms in range(2, 5):
         for is_binding in [False, True]:
-            for n_arms in range(2, 5):
+            for n_looks in range(6, 2, -1):
                 for j in range(N_SCENARIOS_PER_OPTION):
                     if n_looks == 2:
                         looks_fractions = np.array([0.5, 1.0])
@@ -1176,14 +1164,14 @@ def compare_multiple_scenarios():
                     rate_per_arm_h1 = np.array([0.5])
                     rate_per_arm_h1 = np.append(
                         rate_per_arm_h1,
-                        np.random.choice(
-                            [p1, p2, p3, p4], size=n_arms - 1, replace=True
-                        ),
+                        rng.choice([p1, p2, p3, p4], size=n_arms - 1, replace=True),
                     )
+                    sample_size_multiplier = rng.uniform(1.05, 1.25)
                     print(
-                        f"n_arms: {n_arms}, n_looks: {n_looks}, is_binding: {is_binding}"
+                        f"n_looks: {n_looks}, n_arms: {n_arms}, is_binding: {is_binding}"
                     )
                     print(f"looks_fractions: {looks_fractions}")
+                    print(f"inflation factor: {sample_size_multiplier:.2f}")
                     print(f"h1 rates: {rate_per_arm_h1}")
                     input_parameters_list.append(
                         InputParameters(
@@ -1209,9 +1197,96 @@ def compare_multiple_scenarios():
             input_parameters=input_parameters,
             filename=filename,
             verbose=False,
+            base_seed=1729 + i * 1000,
         )
 
 
+def analyse_scenario(filename: str):
+
+    optimization_runs = load_optimization_runs(filename)
+    input_parameters = optimization_runs[0].input_parameters
+    if input_parameters.n_looks != 4:
+        return
+    print(f"\n\nAnalysing scenario {filename}")
+    print(f"Input parameters: {input_parameters}")
+    for run in optimization_runs:
+        if (
+            run.optimization_parameters.algorithm
+            == AlgorithmName.FIND_CONSTANT_THRESHOLDS
+        ):
+            break
+        print(f"\nOptimization: {run.optimization_parameters.name}")
+        print(f"Algorithm: {run.optimization_parameters.algorithm}")
+        print(f"n. function evaluations: {run.result.nfev}")
+        # print(f"Result: {run.result}")
+        if input_parameters.is_binding:
+            print(f"Type I error = {run.result.type_I_error:.4f}")
+        else:
+            print(
+                f"Type I error = {run.result.type_I_error:.4f} (non-binding = {run.result.non_binding_type_I_error:.4f})"
+            )
+        print(f"Power = {run.result.power:.4f}")
+        # print(f"Average sample size under H0 = {run.result.ess_null:.2f}")
+        # print(f"Average sample size under H1 = {run.result.ess_alt:.2f}")
+        print(f"Cost = {run.result.cost:.2f}")
+
+
+def analyse_scenarios():
+    i = 0
+    filename = f"scenario_{i+1}.json"
+    # check if the file exists
+    scenarios = []
+    while os.path.exists(filename):
+        scenario_runs = load_optimization_runs(filename)
+        i += 1
+        filename = f"scenario_{i+1}.json"
+        scenarios.append(scenario_runs)
+
+    for n_looks in [[3], [4], [5], [6]]:  # range(3, 7):
+        for is_binding in [[False, True]]:
+            # for n_arms in range(2, 5):
+            for n_arms in [[2, 3, 4]]:
+                # n_looks = [n_looks]
+                relevant_runs = [
+                    scenario
+                    for scenario in scenarios
+                    if scenario[0].input_parameters.n_looks in n_looks
+                    and scenario[0].input_parameters.n_arms in n_arms
+                    and scenario[0].input_parameters.is_binding in is_binding
+                ]
+                print(
+                    f"\n\nAnalysing scenarios with n_looks_options={n_looks}, n_arms_options={n_arms}, is_binding_options={is_binding}"
+                )
+                hsd_spending_runs = [run[0] for run in relevant_runs]
+                general_spending_runs = [run[1] for run in relevant_runs]
+                thresholds_runs = [run[2] for run in relevant_runs]
+                for runs, name in [
+                    (hsd_spending_runs, "HSD_SPENDING"),
+                    (general_spending_runs, "GENERAL_SPENDING"),
+                    (thresholds_runs, "THRESHOLDS"),
+                ]:
+                    if len(runs) == 0:
+                        print(f"No runs found for {name}")
+                        continue
+                    print(
+                        f"\n\nAnalysing runs for {runs[0].optimization_parameters.name}"
+                    )
+                    print(f"number of runs = {len(runs)}")
+                    print(
+                        f"average function evaluations = {np.mean([run.result.nfev for run in runs]):.2f}, std = {np.std([run.result.nfev for run in runs]):.2f}"
+                    )
+                    print(
+                        f"average cost = {np.mean([(run.result.cost - hsd_spending_runs[i].result.cost) / hsd_spending_runs[i].result.cost for i, run in enumerate(runs)]):.4f}, std = {np.std([(run.result.cost - hsd_spending_runs[i].result.cost) / hsd_spending_runs[i].result.cost for i, run in enumerate(runs)]):.2f}"
+                    )
+                    print(
+                        f"avg type I error deviation: {np.mean([np.abs(run.result.type_I_error-run.input_parameters.alpha) for run in runs]):.4f}"
+                    )
+                    print(
+                        f"avg power deviation: {np.mean([np.abs(run.result.power-run.input_parameters.power) for run in runs]):.4f}"
+                    )
+
+
 if __name__ == "__main__":
-    # generate_tables()
-    compare_multiple_scenarios()
+    # generate_tables_for_single_scenario()
+    # compare_multiple_scenarios()
+    analyse_scenarios()

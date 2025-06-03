@@ -10,16 +10,15 @@ from rpy2.robjects.packages import importr
 from scipy.optimize import differential_evolution
 from scipy.stats import norm
 
-from gsd.basic_code.find_best_general_spending import \
-    find_best_general_spending
-from gsd.basic_code.find_good_hsd_spending_functions import \
-    find_best_hsd_spending
-from gsd.basic_code.gsd_statistics_calculator import \
-    get_statistics_given_thresholds
-from gsd.basic_code.gsd_threshold_finder_algorithm_1 import \
-    get_efficacy_futility_thresholds
-from gsd.basic_code.utils.spending_function import \
-    generate_spending_from_spending_parameter
+from gsd.basic_code.find_best_general_spending import find_best_general_spending
+from gsd.basic_code.find_good_hsd_spending_functions import find_best_hsd_spending
+from gsd.basic_code.gsd_statistics_calculator import get_statistics_given_thresholds
+from gsd.basic_code.gsd_threshold_finder_algorithm_1 import (
+    get_efficacy_futility_thresholds,
+)
+from gsd.basic_code.utils.spending_function import (
+    generate_spending_from_spending_parameter,
+)
 
 default_weights = np.array([0.4, 0.4, 0, 0.2])  # W1, W2, 0, W3
 N_TRIALS1 = 100000
@@ -820,7 +819,7 @@ def analyse_design(input_filename: str):
 
         if runs[0].optimization_result.nfev is not None:
             print(
-                f"avg n. function evaluations: {np.mean([run.optimization_result.nfev for run in runs])}"
+                f"avg n. function evaluations: {np.mean([run.optimization_result.nfev for run in runs])}, std = {np.std([run.optimization_result.nfev for run in runs])}"
             )
         # if runs[0].optimization_result.time is not None:
         #     print(
@@ -832,9 +831,7 @@ def analyse_design(input_filename: str):
         # print(
         #     f"avg ess_alt:{np.mean([run.optimization_result.ess_alt for run in runs])}"
         # )
-        print(
-            f"avg cost:{np.mean([run.optimization_result.cost for run in runs])}"
-        )
+        print(f"avg cost:{np.mean([run.optimization_result.cost for run in runs])}")
         print(
             f"max type_I_error deviation: {np.max([np.abs(run.optimization_result.type_I_error-run.input_parameters.alpha) for run in runs])}"
         )
@@ -862,12 +859,12 @@ def compare_multiple_scenarios():
             fixed_sample_size=0,  # Will be calculated based on alpha, power, and effect size
         )
         # Uncomment the next 2 lines to run the scenarios and save the results
-        filename = f"optimization_results_n_looks_{n_looks}_large_effect.json"
-        run_scenario(
-            input_parameters=input_parameters,
-            output_filename=filename,
-            verbose=True,
-        )
+        filename = f"optimization_results_n_looks_{n_looks}_old_run.json"
+        # run_scenario(
+        #     input_parameters=input_parameters,
+        #     output_filename=filename,
+        #     verbose=True,
+        # )
         # This analyses the results of the previous runs
         # filename = f"optimization_results_n_looks_{n_looks}_old_run.json"
         analyse_design(
