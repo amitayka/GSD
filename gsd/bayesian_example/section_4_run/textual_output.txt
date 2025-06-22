@@ -40,3 +40,25 @@ actual type I error = 0.0221974
 actual power = 0.8004623000000001
 average_sample_size_h0 = 268.98553400000003
 average_sample_size_h1 = 337.4421673
+===========================
+Best thresholds found:
+===========================
+Time to find thresholds = 8830.32 seconds
+differential evolution function evaluations = 20588
+efficacy_thresholds = [0.99978168 0.99780137 0.99640957 0.99329016]
+futility_thresholds = [0.67392752 0.72160686 0.90708701 0.99329016]
+actual type I error = 0.0222187
+actual power = 0.801858
+average_sample_size_h0 = 274.8119554
+average_sample_size_h1 = 344.27594410000006
+===============================
+Constant bounds:
+===============================
+efficacy_thresholds_constant = [0.99727044 0.99727044 0.99727044 0.99727044]
+futility_thresholds_constant = [2.68220901e-08 2.68220901e-08 2.68220901e-08 2.68220901e-08]
+actual type I error = 0.024366
+efficacy_probs_trial_per_look = [0.008134 0.007276 0.0047   0.004256]
+actual power = 0.7718329999999999
+efficacy_probs_trial_per_look = [0.2108   0.199839 0.167595 0.193599]
+average_sample_size_h0 = 570.2206199999999
+average_sample_size_h1 = 415.6966739999999
