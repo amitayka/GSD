@@ -1,0 +1,42 @@
+rate_per_arm_h0 = [0.5 0.5 0.5 0.5]
+rate_per_arm_h1 = [0.5  0.7  0.6  0.55]
+alpha = 0.025
+power = 0.8
+looks_fractions = [0.29850746 0.5        0.69402985 1.        ]
+sample_size_multiplier = 1.15
+is_binding = False
+fixed_size_per_arm = 117
+fixed_size = 468
+n_looks = 4
+n_samples_per_look_total = [160 268 372 536]
+n_samples_per_arm_per_look = [ 40  67  93 134]
+========================================
+Best alpha and beta spending parameters:
+========================================
+Time to find hsd spending function = 450.98 seconds
+number of function evaluations =  633
+best_alpha_spending_parameter =  -1.3359342133389895
+best_beta_spending_parameter =  -1.4268339121971032
+best_alpha_spending_parameter = -1.3359342133389895
+best_beta_spending_parameter = -1.4268339121971032
+best_alpha_spending = [0.0043696  0.00410421 0.00514615 0.01138005]
+best_beta_spending = [0.03354926 0.0322196  0.04113078 0.09310036]
+best_efficacy_thresholds = [0.99882722 0.99797993 0.9976659  0.99340519]
+best_futility_thresholds = [0.59050965 0.80867878 0.93067067 0.99340519]
+best_alpha_spending_parameter = -1.3359342133389895. best_beta_spending_parameter = -1.4268339121971032
+best_stats_h0.average_sample_size = 275.4442263 (Relative to fixed: 0.5885560391025642)
+best_stats_h1.average_sample_size = 343.9711758999999 (Relative to fixed: 0.7349811450854699)
+Time to generate alpha-beta graphs = 334.90 seconds
+===============================
+Best spending functions found:
+===============================
+Time to find spending function = 2246.33 seconds
+number of function evaluations = 3247
+alpha_spending_differential_evolution = [0.00389629 0.0051     0.00381093 0.01219278]
+beta_spending_differential_evolution = [0.04444689 0.0326059  0.02777738 0.09516984]
+efficacy_thresholds_differential_evolution = [0.99882722 0.99771612 0.99770385 0.99326065]
+futility_thresholds_differential_evolution = [0.67245217 0.81003449 0.90954028 0.99326065]
+actual type I error = 0.0221974
+actual power = 0.8004623000000001
+average_sample_size_h0 = 268.98553400000003
+average_sample_size_h1 = 337.4421673

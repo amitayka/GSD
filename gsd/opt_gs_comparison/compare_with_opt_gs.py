@@ -809,17 +809,24 @@ def run_scenario(input_parameters, output_filename: str, verbose: bool = False):
 def analyse_design(input_filename: str):
     optimization_runs = load_optimization_runs(input_filename)
     run_names = sorted(set([run.config.name for run in optimization_runs]))
+    optgs_cost = 100
     for run_name in run_names:
+
+        runs = [run for run in optimization_runs if run.config.name == run_name]
+        if len(runs) != REPEATS2 and len(runs) != 1:
+            continue
+        if run_name == f"4 hsd_monte_carlo_with_optgs_groupsize_n_trials_{N_TRIALS2}":
+            continue
         print(f"====================")
         print(f"Algorithm: {run_name}")
         print(f"====================")
-        runs = [run for run in optimization_runs if run.config.name == run_name]
         print(f"Number of runs: {len(runs)}")
+
         # print(f"groupsizes: {[run.optimization_result.groupsize for run in runs]}")
 
         if runs[0].optimization_result.nfev is not None:
             print(
-                f"avg n. function evaluations: {np.mean([run.optimization_result.nfev for run in runs])}, std = {np.std([run.optimization_result.nfev for run in runs])}"
+                f"avg n. function evaluations: ${np.mean([run.optimization_result.nfev for run in runs]):.0f} \pm {np.std([run.optimization_result.nfev for run in runs]):.0f}$"
             )
         # if runs[0].optimization_result.time is not None:
         #     print(
@@ -831,9 +838,34 @@ def analyse_design(input_filename: str):
         # print(
         #     f"avg ess_alt:{np.mean([run.optimization_result.ess_alt for run in runs])}"
         # )
-        print(f"avg cost:{np.mean([run.optimization_result.cost for run in runs])}")
+        if run_name == "0 optgs":
+            optgs_cost = np.mean([run.optimization_result.cost for run in runs])
+        print(f"OptGS cost: {optgs_cost:.1f}")
         print(
-            f"max type_I_error deviation: {np.max([np.abs(run.optimization_result.type_I_error-run.input_parameters.alpha) for run in runs])}"
+            f"avg cost rel to OptGS:${np.mean([run.optimization_result.cost / optgs_cost for run in runs]):.3f} \pm {np.std([run.optimization_result.cost/optgs_cost for run in runs]):.3f}$"
+        )
+        good_runs = [
+            run
+            for run in runs
+            if (
+                run.optimization_result.type_I_error
+                <= run.input_parameters.alpha + 0.0001
+                and run.optimization_result.power >= run.input_parameters.power - 0.001
+            )
+        ]
+        if len(good_runs) > 0:
+            print(
+                f"min cost: {np.min([run.optimization_result.cost/optgs_cost for run in good_runs])} (n good runs: {len(good_runs)})"
+            )
+
+        print(
+            f"avg type_I_error deviation: {np.mean([np.abs(run.optimization_result.type_I_error-run.input_parameters.alpha) for run in runs])}, std = {np.std([np.abs(run.optimization_result.type_I_error-run.input_parameters.alpha) for run in runs])}"
+        )
+        print(
+            f"max type I error deviation: {np.max([np.abs(run.optimization_result.type_I_error - run.input_parameters.alpha) for run in runs])}"
+        )
+        print(
+            f"avg power deviation: {np.mean([np.abs(run.optimization_result.power - run.input_parameters.power) for run in runs])}, std = {np.std([np.abs(run.optimization_result.power - run.input_parameters.power) for run in runs])}"
         )
         print(
             f"max power deviation: {np.max([np.abs(run.optimization_result.power - run.input_parameters.power) for run in runs])}"
@@ -858,15 +890,17 @@ def compare_multiple_scenarios():
             weights=weights,
             fixed_sample_size=0,  # Will be calculated based on alpha, power, and effect size
         )
-        # Uncomment the next 2 lines to run the scenarios and save the results
         filename = f"optimization_results_n_looks_{n_looks}_old_run.json"
+
+        # Uncomment the next line to run the scenarios and save the results
         # run_scenario(
         #     input_parameters=input_parameters,
         #     output_filename=filename,
         #     verbose=True,
         # )
         # This analyses the results of the previous runs
-        # filename = f"optimization_results_n_looks_{n_looks}_old_run.json"
+
+        # Uncomment the next line to analyse the results
         analyse_design(
             input_filename=filename,
         )
